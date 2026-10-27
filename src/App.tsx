@@ -194,7 +194,7 @@ export default function App() {
   const preview = useMemo(() => activeDocument ? JSON.stringify(activeDocument.working, null, 2) : '', [activeDocument])
 
   if (restoring) {
-    return <main className="loading-page" aria-live="polite"><img className="brand-logo" src="/json-dev-logo.png" alt="JSON Dev logo" /><strong>Restoring your workspace…</strong></main>
+    return <main className="loading-page" aria-live="polite"><img className="brand-logo" src="/json-dev-logo.png" alt="JSON Studio logo" /><strong>Restoring your workspace…</strong></main>
   }
 
   if (!activeDocument) {
@@ -209,7 +209,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="app-brand"><img className="brand-logo small" src="/json-dev-logo.png" alt="JSON Dev logo" /><span>JSON Dev</span></div>
+        <div className="app-brand"><img className="brand-logo small" src="/json-dev-logo.png" alt="JSON Studio logo" /><span>JSON Studio</span></div>
         <div className="header-actions">
           <button className="button button-secondary" type="button" onClick={reset} disabled={!activeDocument.isDirty}><RotateCcw size={16} aria-hidden="true" /> Reset</button>
           <button className="button button-primary" type="button" onClick={save} disabled={!activeDocument.isDirty && activeDocument.savedJson !== null}><Save size={16} aria-hidden="true" /> Save changes</button>

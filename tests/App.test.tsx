@@ -42,15 +42,15 @@ describe('application workflow', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
-  it('shows JSON Dev branding before and after opening a file', async () => {
+  it('shows JSON Studio branding before and after opening a file', async () => {
     const view = render(<App />)
     await screen.findByRole('button', { name: /browse files/i })
-    expect(screen.getByText('JSON Dev')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'JSON Dev logo' })).toHaveAttribute('src', '/json-dev-logo.png')
+    expect(screen.getByText('JSON Studio')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'JSON Studio logo' })).toHaveAttribute('src', '/json-dev-logo.png')
     fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [jsonFile('{"name":"Dev"}')] } })
     await screen.findByRole('heading', { name: 'Edit JSON' })
-    expect(screen.getByText('JSON Dev')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'JSON Dev logo' })).toHaveAttribute('src', '/json-dev-logo.png')
+    expect(screen.getByText('JSON Studio')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'JSON Studio logo' })).toHaveAttribute('src', '/json-dev-logo.png')
   })
 
   it('uploads valid JSON and generates controls recursively for every type', async () => {

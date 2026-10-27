@@ -32,8 +32,8 @@ export function JsonUploader({ onFile, busy, compact = false }: JsonUploaderProp
     <main className="upload-page">
       <section className="upload-hero" aria-labelledby="upload-title">
         <div className="brand-lockup">
-          <img className="brand-logo" src="/json-dev-logo.png" alt="JSON Dev logo" />
-          <span>JSON Dev</span>
+          <img className="brand-logo" src="/json-dev-logo.png" alt="JSON Studio logo" />
+          <span>JSON Studio</span>
         </div>
         <div className="hero-copy">
           <span className="eyebrow">Browser-based developer tool</span>
