@@ -1,0 +1,535 @@
+# Project: Dynamic JSON Editor & Nested JSON Management Web App
+
+## 1. Role and Expertise
+
+Act as a **Senior React Developer, Frontend Architect, UI/UX Designer, and Software Engineer with 10+ years of professional experience** in building scalable web applications, dynamic form generators, JSON processing tools, and developer utilities.
+
+Your responsibilities are to:
+- Analyze the requirements carefully before implementation.
+- Design a maintainable and scalable React application.
+- Build a fully dynamic JSON editor that adapts to any valid JSON file.
+- Provide an intuitive, professional user experience.
+- Implement reliable editing, nested field management, validation, saving, and JSON downloading.
+- Test the complete workflow and handle edge cases.
+
+Do not begin coding immediately. First analyze the requirements, propose the architecture and implementation plan, and then proceed with implementation after the plan is established.
+
+## 2. Project Objective
+
+Build a modern, responsive, React-based web application called **Dynamic JSON Editor**.
+
+The purpose of this application is to allow users to upload a JSON file, automatically generate an editable form based on its structure, update existing values, add new fields or nested objects, manage arrays, and download the updated JSON file.
+
+The application must work with different JSON structures without hardcoding field names or assuming a fixed schema.
+
+**Core workflow:**
+
+Upload JSON → Parse JSON → Generate Dynamic Form → Edit Values → Add or Remove Fields → Save Changes → Download Updated JSON.
+
+## 3. Recommended Technology Stack
+
+Use the following technology stack unless the existing project architecture requires a different approach.
+
+- **Frontend:** React with Vite.
+- **Language:** TypeScript.
+- **Styling:** Tailwind CSS.
+- **Icons:** Lucide React.
+- **Form generation:** A recursive JSON schema/data renderer implemented using reusable React components.
+- **State management:** React state and appropriate custom hooks; introduce an external state library only if genuinely necessary.
+- **File handling:** Browser File API and Blob API.
+- **Validation:** Native JSON parsing and custom validation utilities.
+- **Testing:** Vitest and React Testing Library.
+
+The core JSON editing functionality must run entirely in the browser. Do not require a backend, database, authentication system, or external API for basic operation.
+
+## 4. JSON Upload Functionality
+
+Create a professional upload interface that supports:
+
+1. Dragging and dropping a JSON file.
+2. Selecting a JSON file using a file picker.
+3. Uploading files with the `.json` extension.
+4. Displaying the uploaded filename and file size.
+5. Showing a loading or processing indicator when necessary.
+6. Parsing the file and identifying its root structure.
+7. Displaying a clear error message if the file contains invalid JSON.
+8. Allowing the user to replace the currently uploaded file.
+
+Support valid JSON whose root value is an object or an array. Also handle valid primitive root values gracefully, even if the editor presents them through a simplified editing interface.
+
+If parsing fails, show the line and column information when available, and preserve the ability to select another file.
+
+Never silently replace invalid input with an empty object.
+
+## 5. Dynamic Form Generation Engine
+
+This is the most important feature of the application.
+
+Implement a recursive form renderer that analyzes the uploaded JSON data and generates the editing interface dynamically.
+
+The renderer must recognize the following JSON value types:
+
+### A. String
+
+Example:
+
+`"name": "Dev Bhavsar"`
+
+Render:
+- Field label: `name`
+- Editable text input containing `Dev Bhavsar`
+
+### B. Number
+
+Example:
+
+`"age": 22`
+
+Render:
+- Field label: `age`
+- Numeric input containing `22`
+
+Preserve numeric values as numbers rather than converting them into strings.
+
+### C. Boolean
+
+Example:
+
+`"isActive": true`
+
+Render:
+- Field label: `isActive`
+- Toggle switch or checkbox.
+
+### D. Null
+
+Example:
+
+`"middleName": null`
+
+Render:
+- Field label: `middleName`
+- A clear null indicator.
+- An appropriate control to keep the value null or replace it with a string, number, boolean, object, or array.
+
+Do not automatically convert null values to empty strings.
+
+### E. Object
+
+Example:
+
+`"address": { "city": "Ahmedabad", "country": "India" }`
+
+Render:
+- A nested object section titled `address`.
+- Editable fields for `city` and `country`.
+- An Add Field button for adding properties to this object.
+- Appropriate expand and collapse controls.
+
+### F. Array
+
+Example:
+
+`"skills": ["React", "Laravel", "Python"]`
+
+Render:
+- A section titled `skills`.
+- Separate editable controls for each array element.
+- An Add Item button.
+- Controls to remove array elements.
+- Optional drag-and-drop reordering if practical.
+
+Support arrays containing strings, numbers, booleans, objects, arrays, and mixed JSON value types.
+
+### G. Nested Objects and Arrays
+
+The renderer must support unlimited practical nesting depth, subject to reasonable application performance and browser limits.
+
+For example:
+
+{
+  "user": {
+    "profile": {
+      "name": "Dev",
+      "preferences": {
+        "theme": "light"
+      }
+    }
+  },
+  "projects": [
+    {
+      "name": "JSON Editor",
+      "technologies": ["React", "TypeScript"]
+    }
+  ]
+}
+
+The application must automatically generate all corresponding nested sections and editing controls.
+
+Do not implement nested handling with a fixed number of levels. Use a recursive component or an equivalent general-purpose tree renderer.
+
+## 6. Dynamic Field Management
+
+Users must be able to modify the JSON structure, not just its existing values.
+
+### Add a field to an object
+
+When a user clicks **Add Field** inside an object:
+
+1. Open a small inline editor or modal.
+2. Ask for the new property name.
+3. Let the user select its initial value type:
+   - String
+   - Number
+   - Boolean
+   - Null
+   - Object
+   - Array
+4. Initialize the new field with an appropriate default value.
+5. Insert the field into the correct parent object.
+6. Immediately render the corresponding editing control.
+
+Example:
+
+Before:
+
+{
+  "name": "Dev"
+}
+
+After adding `email`:
+
+{
+  "name": "Dev",
+  "email": ""
+}
+
+### Add nested objects
+
+When the user adds a field of type Object, create an editable empty object.
+
+Example:
+
+{
+  "name": "Dev",
+  "address": {}
+}
+
+Allow users to add fields inside the new object.
+
+### Add arrays
+
+When the user adds a field of type Array, create an empty array.
+
+Example:
+
+{
+  "name": "Dev",
+  "skills": []
+}
+
+Provide an Add Item action and allow users to choose the initial item type.
+
+### Duplicate field protection
+
+- Prevent duplicate property names within the same object.
+- Allow the same property name in different nested objects.
+- Display a clear validation message when a duplicate name is entered.
+- Preserve property names exactly as entered, subject to validation against duplicate keys.
+
+### Remove fields and array items
+
+Provide a delete action for object properties and array elements.
+
+Use a confirmation step for destructive changes when appropriate, especially for non-empty nested objects.
+
+Do not confuse removing an object property with setting its value to null.
+
+## 7. Editing and Data Integrity
+
+Implement a reliable state-management system that keeps the form and underlying JSON data synchronized.
+
+Requirements:
+
+- Every input must update the correct JSON path.
+- Nested updates must not accidentally overwrite unrelated fields.
+- Array updates must target the correct element.
+- Preserve valid JSON value types.
+- Preserve empty strings, zero, false, and null as distinct values.
+- Escape special characters correctly when serializing JSON.
+- Support property names containing spaces, dots, brackets, or special characters.
+- Do not use a naive dot-separated path format that breaks when property names contain dots or brackets.
+- Use safe path segments, such as arrays of string keys and numeric indices, or another robust tree-update strategy.
+- Avoid direct mutation of React state.
+- Maintain the original data separately from the editable working copy so users can discard changes or reset the form.
+- Warn users before discarding unsaved changes when appropriate.
+
+Add an explicit value-type conversion control where users need to change a field from one JSON type to another.
+
+For example, a string field can be changed into an object or array without corrupting unrelated data.
+
+## 8. Save and Download Workflow
+
+The main editing interface must include a clearly visible **Save Changes** button.
+
+When the user clicks Save Changes:
+
+1. Validate the current JSON tree.
+2. Confirm that all values are serializable as valid JSON.
+3. Update the application's saved working copy.
+4. Generate a formatted JSON string using `JSON.stringify(data, null, 2)`.
+5. Display a success message.
+6. Reveal or enable a **Download Updated JSON** button.
+
+The download button must download the updated data as a `.json` file.
+
+Additional requirements:
+
+- Use the original filename where possible.
+- Save the output with a recognizable suffix, such as `filename_updated.json`.
+- Use a Blob with the correct JSON MIME type.
+- Trigger the download through a temporary object URL.
+- Revoke the object URL after use.
+- Do not upload the file to a server.
+- Never display a success message if validation or serialization fails.
+- If the user edits the data again after saving, mark the document as having unsaved changes and require another save before downloading the latest version.
+- Ensure that the downloaded JSON reflects the latest successfully saved state, not a stale snapshot.
+
+Optionally provide a formatted JSON preview that users can inspect before downloading.
+
+## 9. Professional UI/UX Design
+
+Build a modern, clean developer-tool interface inspired by professional JSON editors and productivity applications.
+
+### Design direction
+
+- Clean, minimal, developer-focused interface.
+- Light theme by default.
+- Neutral backgrounds, subtle borders, and restrained accent colors.
+- Clear typography and spacing.
+- Rounded cards and accessible controls.
+- Responsive design for desktop, tablet, and mobile.
+- Avoid excessive gradients, unnecessary animations, and clutter.
+- Support keyboard navigation and visible focus states.
+
+### Screen 1: Upload page
+
+Include:
+- Application logo or simple JSON-themed icon.
+- Application name and short description.
+- Large drag-and-drop upload zone.
+- Browse Files button.
+- Supported file type information.
+- A small example showing what the tool does.
+
+### Screen 2: JSON editor
+
+Create a practical editing workspace.
+
+**Header:**
+- Application name.
+- Uploaded filename.
+- File replacement option.
+- Save Changes button.
+- Download Updated JSON button, shown or enabled only after a successful save.
+
+**Main editor area:**
+- Hierarchical nested object and array sections.
+- Field labels.
+- Type indicators.
+- Inline editing controls.
+- Add Field and Add Item buttons.
+- Delete actions.
+- Expand/collapse controls.
+
+**Optional sidebar or toolbar:**
+- Search fields by property name.
+- Expand All and Collapse All.
+- Reset Changes.
+- JSON statistics such as total properties, object count, array count, and nesting depth.
+
+**Optional JSON preview:**
+- Read-only, syntax-highlighted JSON view.
+- Update the preview when the working data changes.
+- Clearly distinguish unsaved changes from saved data.
+
+Do not make the interface unnecessarily complex. Prioritize efficient editing of large, deeply nested JSON files.
+
+## 10. Error Handling and Edge Cases
+
+Handle the following cases properly:
+
+- Invalid JSON syntax.
+- Empty files.
+- Files with a JSON primitive at the root.
+- Empty objects and arrays.
+- Deeply nested objects.
+- Arrays of objects.
+- Mixed-type arrays.
+- Empty strings.
+- Zero and negative numbers.
+- Boolean false.
+- Null values.
+- Duplicate property names during field creation.
+- Special characters in property names.
+- Unicode and non-English text.
+- Large JSON files.
+- Deleted nested objects.
+- Attempts to download unsaved edits.
+- Serialization failures.
+- Unsupported file types.
+- Replacing a file while unsaved changes exist.
+
+Do not use `eval()` or execute uploaded JSON as JavaScript.
+
+Remember that a JSON file cannot represent JavaScript-specific values such as `undefined`, functions, BigInt, circular references, or non-finite numbers as native JSON values. Keep the editor restricted to valid JSON types and reject invalid conversions gracefully.
+
+## 11. Performance and Accessibility
+
+- Use immutable updates and efficient rendering.
+- Avoid unnecessary re-renders for unrelated fields.
+- Use memoization where profiling or component structure justifies it.
+- Avoid introducing large dependencies without a clear reason.
+- Provide accessible labels for all controls.
+- Support keyboard navigation.
+- Use appropriate ARIA attributes where necessary.
+- Ensure errors and success messages are perceivable to assistive technologies.
+- Consider lazy rendering or virtualization if very large files become slow.
+- Add a reasonable configurable file-size limit and communicate it to users.
+
+## 12. Recommended Component Architecture
+
+Organize the application into reusable components, for example:
+
+- `App`
+- `JsonUploader`
+- `JsonEditor`
+- `JsonNode`
+- `ObjectEditor`
+- `ArrayEditor`
+- `PrimitiveField`
+- `AddFieldDialog`
+- `TypeSelector`
+- `JsonPreview`
+- `EditorToolbar`
+- `ValidationMessage`
+- `SaveStatus`
+
+Suggested utility modules:
+
+- `jsonParser`
+- `jsonSerializer`
+- `jsonTreeUtils`
+- `jsonValidation`
+- `fileDownload`
+- `useJsonEditor`
+
+These names are suggestions, not rigid requirements. Choose an architecture that avoids duplication and keeps the recursive rendering logic separate from file handling and state updates.
+
+## 13. Testing Requirements
+
+Write meaningful automated tests for the core functionality.
+
+Test at least:
+
+1. Uploading and parsing a valid JSON file.
+2. Rejecting invalid JSON.
+3. Generating the correct controls for each JSON type.
+4. Editing strings, numbers, and booleans.
+5. Preserving null values.
+6. Adding fields to an object.
+7. Adding nested objects and fields inside them.
+8. Adding array elements.
+9. Removing fields and array elements.
+10. Editing arrays of objects.
+11. Updating properties with special characters in their names.
+12. Preventing duplicate keys during field creation.
+13. Saving valid JSON.
+14. Downloading the saved version.
+15. Preventing downloads of stale data.
+16. Resetting unsaved changes.
+17. Handling empty objects and arrays.
+18. Maintaining unrelated values during nested updates.
+
+Also manually verify the complete workflow in a browser.
+
+## 14. Implementation Workflow
+
+Follow these phases.
+
+### Phase 1 — Requirement analysis
+
+- Review all requirements.
+- Identify technical risks and edge cases.
+- Decide how recursive rendering and safe nested updates will work.
+- Define the save and download state model.
+- Identify any questions that genuinely block implementation.
+
+### Phase 2 — Architecture and implementation plan
+
+Provide:
+- Folder structure.
+- Component responsibilities.
+- State-management approach.
+- Data flow.
+- JSON tree-update strategy.
+- File upload, save, and download workflow.
+- Testing plan.
+
+### Phase 3 — Implementation
+
+Build the application in logical stages.
+
+Start with file upload and parsing, then implement recursive rendering, field editing, nested field creation, arrays, validation, saving, downloading, and UI polish.
+
+Keep the application runnable throughout development.
+
+### Phase 4 — Verification
+
+- Install required dependencies.
+- Run the development server.
+- Run automated tests.
+- Run linting and the production build.
+- Resolve implementation errors.
+- Test important workflows in a browser if browser testing is available.
+- Report any tests or browser checks that could not be performed.
+
+### Phase 5 — Final delivery
+
+Provide:
+- A working React application.
+- The final folder structure.
+- Setup and installation instructions.
+- Commands to start the development server.
+- Instructions for uploading, editing, saving, and downloading JSON.
+- Test and build results.
+- Any known limitations.
+
+## 15. Acceptance Criteria
+
+The application is considered complete only when:
+
+- A user can upload a valid JSON file.
+- The form is generated automatically from the uploaded structure.
+- Every valid JSON type is represented by an appropriate control.
+- Nested objects and arrays are rendered recursively.
+- Users can add, edit, and delete object properties.
+- Users can add, edit, reorder if implemented, and delete array items.
+- New nested structures can be created and edited.
+- Data types remain correct.
+- The user can save changes and download the updated JSON.
+- Unsaved changes cannot be mistaken for saved data.
+- Invalid input is handled safely.
+- The interface is responsive and professional.
+- The application runs without requiring a backend.
+- Automated tests and production-build checks pass, or any failures are explicitly documented.
+
+## Final Instruction
+
+First inspect the existing workspace and determine whether a React project already exists.
+
+If a project exists, analyze its structure and preserve working functionality, existing design conventions, and useful code. Do not overwrite or delete existing files blindly.
+
+If the workspace is empty, initialize a new React + Vite + TypeScript project.
+
+Begin by producing the implementation plan, then proceed with the complete application development. Do not stop at a mockup, static UI, or a plan-only response. Deliver a functional, tested application that meets the acceptance criteria.
