@@ -10,3 +10,21 @@ export interface JsonStats {
   arrays: number
   depth: number
 }
+
+export interface WorkspaceDocument {
+  id: string
+  filename: string
+  size: number
+  original: JsonValue
+  working: JsonValue
+  savedJson: string | null
+  isDirty: boolean
+  searchQuery: string
+  updatedAt: number
+}
+
+export interface WorkspaceState {
+  version: 1
+  documents: WorkspaceDocument[]
+  activeDocumentId: string | null
+}

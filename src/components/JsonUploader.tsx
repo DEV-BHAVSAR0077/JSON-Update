@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Braces, FileJson, UploadCloud } from 'lucide-react'
+import { FileJson, Plus, UploadCloud } from 'lucide-react'
 
 interface JsonUploaderProps {
   onFile: (file: File) => void
@@ -22,7 +22,7 @@ export function JsonUploader({ onFile, busy, compact = false }: JsonUploaderProp
       <>
         <input ref={inputRef} className="sr-only" type="file" accept=".json,application/json" onChange={(event) => accept(event.target.files)} />
         <button className="button button-secondary" type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
-          <UploadCloud size={16} aria-hidden="true" /> Replace file
+          <Plus size={16} aria-hidden="true" /> Add file
         </button>
       </>
     )
@@ -32,8 +32,8 @@ export function JsonUploader({ onFile, busy, compact = false }: JsonUploaderProp
     <main className="upload-page">
       <section className="upload-hero" aria-labelledby="upload-title">
         <div className="brand-lockup">
-          <span className="brand-mark"><Braces size={25} strokeWidth={2.3} aria-hidden="true" /></span>
-          <span>JSON Studio</span>
+          <img className="brand-logo" src="/json-dev-logo.png" alt="JSON Dev logo" />
+          <span>JSON Dev</span>
         </div>
         <div className="hero-copy">
           <span className="eyebrow">Browser-based developer tool</span>
