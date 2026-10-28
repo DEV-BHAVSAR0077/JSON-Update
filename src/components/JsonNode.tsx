@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { memo, startTransition, useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import type { JsonObject, JsonPath, JsonType, JsonValue } from '../types'
 import { defaultForType, isNonEmptyContainer, matchesSearch, typeOfJson } from '../lib/json'
+import { DraftTextInput } from './DraftTextInput'
 
 const types: JsonType[] = ['string', 'number', 'boolean', 'null', 'object', 'array']
 
@@ -79,14 +80,35 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
       onChange={(event) => {
         setText(event.target.value)
         const next = Number(event.target.value)
-        if (event.target.value !== '' && Number.isFinite(next)) onChange(next)
+        if (event.target.value !== '' && Number.isFinite(next)) startTransition(() => onChange(next))
       }}
-      onBlur={() => { if (text === '' || !Number.isFinite(Number(text))) setText(String(value)) }}
+      onBlur={() => {
+        const next = Number(text)
+        if (text === '' || !Number.isFinite(next)) setText(String(value))
+        else if (next !== value) onChange(next)
+      }}
     />
   )
 }
 
-export function JsonNode(props: JsonNodeProps) {
+function samePath(left: JsonPath, right: JsonPath): boolean {
+  return left.length === right.length && left.every((segment, index) => segment === right[index])
+}
+
+function sameProps(left: JsonNodeProps, right: JsonNodeProps): boolean {
+  return left.label === right.label
+    && left.value === right.value
+    && left.query === right.query
+    && left.root === right.root
+    && samePath(left.path, right.path)
+    && left.onChange === right.onChange
+    && left.onRemove === right.onRemove
+    && left.onAddObject === right.onAddObject
+    && left.onAddArray === right.onAddArray
+    && left.onMove === right.onMove
+}
+
+function JsonNodeComponent(props: JsonNodeProps) {
   const { label, value, path, query, root = false, onChange, onRemove, onAddObject, onAddArray, onMove } = props
   const type = typeOfJson(value)
   const [expanded, setExpanded] = useState(true)
@@ -151,7 +173,7 @@ export function JsonNode(props: JsonNodeProps) {
         <span className={`type-pill type-${type}`}>{type}</span>
       </div>
       <div className="primitive-control">
-        {type === 'string' && <input aria-label={`${label} value`} type="text" value={value as string} onChange={(event) => onChange(path, event.target.value)} />}
+        {type === 'string' && <DraftTextInput aria-label={`${label} value`} value={value as string} onValueChange={(next) => onChange(path, next)} />}
         {type === 'number' && <NumberInput label={label} value={value as number} onChange={(next) => onChange(path, next)} />}
         {type === 'boolean' && (
           <label className="switch">
@@ -168,3 +190,5 @@ export function JsonNode(props: JsonNodeProps) {
     </div>
   )
 }
+
+export const JsonNode = memo(JsonNodeComponent, sameProps)

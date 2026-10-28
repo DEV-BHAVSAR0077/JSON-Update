@@ -144,6 +144,26 @@ describe('application workflow', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
+  it('adjusts the live preview code font size', async () => {
+    const user = userEvent.setup()
+    const view = await upload('{"name":"Dev"}')
+    await user.click(screen.getByRole('button', { name: /show json preview/i }))
+    const preview = view.container.querySelector('.preview-panel pre')!
+    const decrease = screen.getByRole('button', { name: /decrease preview font size/i })
+    const increase = screen.getByRole('button', { name: /increase preview font size/i })
+    expect(preview).toHaveStyle({ fontSize: '11px' })
+    expect(screen.getByText('11')).toBeInTheDocument()
+    expect(screen.queryByText('11px')).not.toBeInTheDocument()
+
+    await user.click(increase)
+    expect(preview).toHaveStyle({ fontSize: '12px' })
+    await user.click(decrease)
+    await user.click(decrease)
+    await user.click(decrease)
+    expect(preview).toHaveStyle({ fontSize: '9px' })
+    expect(decrease).toBeDisabled()
+  })
+
   it('shows a red Failed notification with a trailing cross when save fails', async () => {
     persisted = {
       version: 1,
@@ -171,6 +191,27 @@ describe('application workflow', () => {
     expect(await screen.findByLabelText('name value')).toHaveValue('Restored')
     expect(screen.getByText(/unsaved changes in profile.json/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /open profile.json, document 1/i })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('coalesces rapid edits into one workspace persistence write', async () => {
+    await upload('{"name":"Dev"}')
+    await waitFor(() => expect(storage.save).toHaveBeenCalled())
+    storage.save.mockClear()
+    vi.useFakeTimers()
+
+    const input = screen.getByLabelText('name value')
+    fireEvent.change(input, { target: { value: 'D' } })
+    fireEvent.change(input, { target: { value: 'De' } })
+    fireEvent.change(input, { target: { value: 'Developer' } })
+    act(() => vi.advanceTimersByTime(299))
+    expect(storage.save).not.toHaveBeenCalled()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(storage.save).toHaveBeenCalledOnce()
   })
 
   it('keeps duplicate filenames and document edits isolated while switching', async () => {

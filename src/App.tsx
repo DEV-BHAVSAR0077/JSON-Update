@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Download, FileJson, RotateCcw, Save, Search, ShieldCheck, X } from 'lucide-react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Download, FileJson, Minus, Plus, RotateCcw, Save, Search, X } from 'lucide-react'
+import { DraftTextInput } from './components/DraftTextInput'
 import { JsonUploader } from './components/JsonUploader'
 import { JsonNode } from './components/JsonNode'
 import type { JsonPath, JsonValue, WorkspaceDocument, WorkspaceState } from './types'
@@ -20,6 +21,8 @@ import { EMPTY_WORKSPACE, loadWorkspace, saveWorkspace } from './lib/workspace'
 
 type Message = { kind: 'error' | 'success'; text: string }
 type PersistenceStatus = 'restoring' | 'saving' | 'saved' | 'error'
+const MIN_PREVIEW_FONT_SIZE = 9
+const MAX_PREVIEW_FONT_SIZE = 20
 
 function createDocumentId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -29,10 +32,11 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(EMPTY_WORKSPACE)
   const [busy, setBusy] = useState(false)
   const [restoring, setRestoring] = useState(true)
-  const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>('restoring')
+  const [, setPersistenceStatus] = useState<PersistenceStatus>('restoring')
   const [persistenceDisabled, setPersistenceDisabled] = useState(false)
   const [message, setMessage] = useState<Message | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [previewFontSize, setPreviewFontSize] = useState(11)
   const persistenceQueue = useRef<Promise<void>>(Promise.resolve())
   const persistenceVersion = useRef(0)
 
@@ -65,19 +69,22 @@ export default function App() {
     if (restoring || persistenceDisabled) return
     const version = ++persistenceVersion.current
     setPersistenceStatus('saving')
-    persistenceQueue.current = persistenceQueue.current
-      .catch(() => undefined)
-      .then(() => saveWorkspace(workspace))
-    persistenceQueue.current
-      .then(() => {
-        if (persistenceVersion.current === version) setPersistenceStatus('saved')
-      })
-      .catch((error) => {
-        if (persistenceVersion.current !== version) return
-        setPersistenceDisabled(true)
-        setPersistenceStatus('error')
-        setMessage({ kind: 'error', text: `${error instanceof Error ? error.message : 'Browser persistence failed.'} Your documents remain available in this session only.` })
-      })
+    const timeout = window.setTimeout(() => {
+      persistenceQueue.current = persistenceQueue.current
+        .catch(() => undefined)
+        .then(() => saveWorkspace(workspace))
+      persistenceQueue.current
+        .then(() => {
+          if (persistenceVersion.current === version) setPersistenceStatus('saved')
+        })
+        .catch((error) => {
+          if (persistenceVersion.current !== version) return
+          setPersistenceDisabled(true)
+          setPersistenceStatus('error')
+          setMessage({ kind: 'error', text: `${error instanceof Error ? error.message : 'Browser persistence failed.'} Your documents remain available in this session only.` })
+        })
+    }, 300)
+    return () => window.clearTimeout(timeout)
   }, [persistenceDisabled, restoring, workspace])
 
   useEffect(() => {
@@ -95,12 +102,12 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [hasAnyUnsavedChanges])
 
-  const updateDocument = (id: string, updater: (document: WorkspaceDocument) => WorkspaceDocument) => {
+  const updateDocument = useCallback((id: string, updater: (document: WorkspaceDocument) => WorkspaceDocument) => {
     setWorkspace((current) => ({
       ...current,
       documents: current.documents.map((document) => document.id === id ? updater(document) : document),
     }))
-  }
+  }, [])
 
   const loadFile = async (file: File) => {
     setMessage(null)
@@ -151,16 +158,17 @@ export default function App() {
     setMessage(null)
   }
 
-  const edit = (updater: (value: JsonValue) => JsonValue) => {
-    if (!activeDocument) return
-    updateDocument(activeDocument.id, (document) => ({
+  const activeDocumentId = activeDocument?.id
+  const edit = useCallback((updater: (value: JsonValue) => JsonValue) => {
+    if (!activeDocumentId) return
+    updateDocument(activeDocumentId, (document) => ({
       ...document,
       working: updater(document.working),
       isDirty: true,
       updatedAt: Date.now(),
     }))
     setMessage(null)
-  }
+  }, [activeDocumentId, updateDocument])
 
   const save = () => {
     if (!activeDocument) return
@@ -191,13 +199,19 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
-  const updateSearch = (searchQuery: string) => {
-    if (!activeDocument) return
-    updateDocument(activeDocument.id, (document) => ({ ...document, searchQuery }))
-  }
-
-  const stats = useMemo(() => activeDocument ? getJsonStats(activeDocument.working) : null, [activeDocument])
-  const preview = useMemo(() => activeDocument ? JSON.stringify(activeDocument.working, null, 2) : '', [activeDocument])
+  const updateSearch = useCallback((searchQuery: string) => {
+    if (!activeDocumentId) return
+    updateDocument(activeDocumentId, (document) => ({ ...document, searchQuery }))
+  }, [activeDocumentId, updateDocument])
+  const changeValue = useCallback((path: JsonPath, value: JsonValue) => edit((root) => updateAtPath(root, path, value)), [edit])
+  const removeValue = useCallback((path: JsonPath) => edit((root) => removeAtPath(root, path)), [edit])
+  const addObjectValue = useCallback((path: JsonPath, key: string, value: JsonValue) => edit((root) => addObjectField(root, path, key, value)), [edit])
+  const addArrayValue = useCallback((path: JsonPath, value: JsonValue) => edit((root) => addArrayItem(root, path, value)), [edit])
+  const moveArrayValue = useCallback((path: JsonPath, from: number, to: number) => edit((root) => moveArrayItem(root, path, from, to)), [edit])
+  const working = activeDocument?.working
+  const deferredWorking = useDeferredValue(working)
+  const stats = useMemo(() => deferredWorking === undefined ? null : getJsonStats(deferredWorking), [deferredWorking])
+  const preview = useMemo(() => showPreview && working !== undefined ? JSON.stringify(working, null, 2) : '', [showPreview, working])
 
   if (restoring) {
     return <main className="loading-page" aria-live="polite"><img className="brand-logo" src="/json-dev-logo.png" alt="JSON Studio logo" /><strong>Restoring your workspace…</strong></main>
@@ -225,7 +239,7 @@ export default function App() {
 
       <main className="editor-layout">
         <aside className="editor-sidebar">
-          <label className="search-box"><Search size={16} aria-hidden="true" /><span className="sr-only">Search active JSON</span><input value={activeDocument.searchQuery} onChange={(event) => updateSearch(event.target.value)} placeholder="Search keys or values…" /></label>
+          <label className="search-box"><Search size={16} aria-hidden="true" /><span className="sr-only">Search active JSON</span><DraftTextInput value={activeDocument.searchQuery} onValueChange={updateSearch} placeholder="Search keys or values…" /></label>
           <section className="stats-card" aria-label="JSON statistics">
             <h2>Document overview</h2>
             <dl>
@@ -276,14 +290,29 @@ export default function App() {
                 value={activeDocument.working}
                 path={[]}
                 query={activeDocument.searchQuery}
-                onChange={(path: JsonPath, value: JsonValue) => edit((root) => updateAtPath(root, path, value))}
-                onRemove={(path: JsonPath) => edit((root) => removeAtPath(root, path))}
-                onAddObject={(path: JsonPath, key: string, value: JsonValue) => edit((root) => addObjectField(root, path, key, value))}
-                onAddArray={(path: JsonPath, value: JsonValue) => edit((root) => addArrayItem(root, path, value))}
-                onMove={(path: JsonPath, from: number, to: number) => edit((root) => moveArrayItem(root, path, from, to))}
+                onChange={changeValue}
+                onRemove={removeValue}
+                onAddObject={addObjectValue}
+                onAddArray={addArrayValue}
+                onMove={moveArrayValue}
               />
             </div>
-            {showPreview && <aside className="preview-panel"><div className="preview-heading"><strong>Live preview</strong><span>{activeDocument.isDirty ? 'Unsaved' : activeDocument.savedJson ? 'Saved' : 'Original'}</span></div><pre><code>{preview}</code></pre></aside>}
+            {showPreview && (
+              <aside className="preview-panel">
+                <div className="preview-heading">
+                  <div className="preview-title">
+                    <strong>Live preview</strong>
+                    <div className="preview-font-controls" role="group" aria-label="Preview font size">
+                      <button type="button" onClick={() => setPreviewFontSize((size) => Math.max(MIN_PREVIEW_FONT_SIZE, size - 1))} disabled={previewFontSize === MIN_PREVIEW_FONT_SIZE} aria-label="Decrease preview font size"><Minus size={14} aria-hidden="true" /></button>
+                      <output className="preview-font-size" aria-live="polite">{previewFontSize}</output>
+                      <button type="button" onClick={() => setPreviewFontSize((size) => Math.min(MAX_PREVIEW_FONT_SIZE, size + 1))} disabled={previewFontSize === MAX_PREVIEW_FONT_SIZE} aria-label="Increase preview font size"><Plus size={14} aria-hidden="true" /></button>
+                    </div>
+                  </div>
+                  <span className="preview-status">{activeDocument.isDirty ? 'Unsaved' : activeDocument.savedJson ? 'Saved' : 'Original'}</span>
+                </div>
+                <pre style={{ fontSize: previewFontSize }}><code>{preview}</code></pre>
+              </aside>
+            )}
           </div>
         </section>
       </main>
