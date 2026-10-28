@@ -1,6 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Download, FileJson, Minus, Plus, RotateCcw, Save, Search, X } from 'lucide-react'
 import { DraftTextInput } from './components/DraftTextInput'
+import { ConfirmDialog, type ConfirmationRequest } from './components/ConfirmDialog'
 import { JsonUploader } from './components/JsonUploader'
 import { JsonNode } from './components/JsonNode'
 import type { JsonPath, JsonValue, WorkspaceDocument, WorkspaceState } from './types'
@@ -38,6 +39,7 @@ export default function App() {
   const [showPreview, setShowPreview] = useState(false)
   const [previewFontSize, setPreviewFontSize] = useState(11)
   const [hasPendingEdit, setHasPendingEdit] = useState(false)
+  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
   const persistenceQueue = useRef<Promise<void>>(Promise.resolve())
   const persistenceVersion = useRef(0)
 
@@ -109,6 +111,7 @@ export default function App() {
       documents: current.documents.map((document) => document.id === id ? updater(document) : document),
     }))
   }, [])
+  const requestConfirmation = useCallback((request: ConfirmationRequest) => setConfirmation(request), [])
 
   const loadFile = async (file: File) => {
     setMessage(null)
@@ -147,16 +150,27 @@ export default function App() {
   }
 
   const removeDocument = (document: WorkspaceDocument) => {
-    if (document.isDirty && !window.confirm(`Remove ${document.filename} and discard its unsaved changes?`)) return
-    setWorkspace((current) => {
-      const index = current.documents.findIndex((item) => item.id === document.id)
-      const documents = current.documents.filter((item) => item.id !== document.id)
-      const activeDocumentId = current.activeDocumentId === document.id
-        ? documents[Math.min(index, documents.length - 1)]?.id ?? null
-        : current.activeDocumentId
-      return { ...current, documents, activeDocumentId }
-    })
-    setMessage(null)
+    const remove = () => {
+      setWorkspace((current) => {
+        const index = current.documents.findIndex((item) => item.id === document.id)
+        const documents = current.documents.filter((item) => item.id !== document.id)
+        const activeDocumentId = current.activeDocumentId === document.id
+          ? documents[Math.min(index, documents.length - 1)]?.id ?? null
+          : current.activeDocumentId
+        return { ...current, documents, activeDocumentId }
+      })
+      setMessage(null)
+    }
+    if (document.isDirty) {
+      requestConfirmation({
+        title: `Remove ${document.filename}?`,
+        message: 'This file has unsaved changes. Removing it will permanently discard those changes.',
+        confirmLabel: 'Remove file',
+        onConfirm: remove,
+      })
+      return
+    }
+    remove()
   }
 
   const activeDocumentId = activeDocument?.id
@@ -184,10 +198,22 @@ export default function App() {
   }
 
   const reset = () => {
-    if (!activeDocument || (activeDocument.isDirty && !window.confirm('Discard all changes and restore the uploaded file?'))) return
-    const isDirty = activeDocument.savedJson !== null && activeDocument.savedJson !== JSON.stringify(activeDocument.original, null, 2)
-    updateDocument(activeDocument.id, (document) => ({ ...document, working: document.original, isDirty, updatedAt: Date.now() }))
-    setMessage(null)
+    if (!activeDocument) return
+    const restore = () => {
+      const isDirty = activeDocument.savedJson !== null && activeDocument.savedJson !== JSON.stringify(activeDocument.original, null, 2)
+      updateDocument(activeDocument.id, (document) => ({ ...document, working: document.original, isDirty, updatedAt: Date.now() }))
+      setMessage(null)
+    }
+    if (activeDocument.isDirty) {
+      requestConfirmation({
+        title: 'Reset changes?',
+        message: `Discard all changes and restore the uploaded version of ${activeDocument.filename}?`,
+        confirmLabel: 'Reset',
+        onConfirm: restore,
+      })
+      return
+    }
+    restore()
   }
 
   const download = () => {
@@ -302,6 +328,7 @@ export default function App() {
                 onAddArray={addArrayValue}
                 onMove={moveArrayValue}
                 onPendingChange={handlePendingEdit}
+                onRequestConfirmation={requestConfirmation}
               />
             </div>
             {showPreview && (
@@ -323,6 +350,19 @@ export default function App() {
           </div>
         </section>
       </main>
+      {confirmation && (
+        <ConfirmDialog
+          title={confirmation.title}
+          message={confirmation.message}
+          confirmLabel={confirmation.confirmLabel}
+          onCancel={() => setConfirmation(null)}
+          onConfirm={() => {
+            const action = confirmation.onConfirm
+            setConfirmation(null)
+            action()
+          }}
+        />
+      )}
     </div>
   )
 }

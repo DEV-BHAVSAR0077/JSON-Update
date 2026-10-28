@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceState } from '../src/types'
@@ -40,7 +40,6 @@ describe('application workflow', () => {
     persisted = { version: 1, documents: [], activeDocumentId: null }
     storage.load.mockReset().mockImplementation(async () => ({ workspace: structuredClone(persisted), warning: null }))
     storage.save.mockReset().mockImplementation(async (workspace: WorkspaceState) => { persisted = structuredClone(workspace) })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
   it('shows JSON Studio branding before and after opening a file', async () => {
@@ -91,8 +90,28 @@ describe('application workflow', () => {
     await user.click(screen.getByRole('button', { name: /^add$/i }))
     expect(screen.getByLabelText('active value')).not.toBeChecked()
     await user.click(screen.getByRole('button', { name: /reset/i }))
+    const resetDialog = screen.getByRole('alertdialog', { name: 'Reset changes?' })
+    expect(resetDialog).toHaveTextContent(/restore the uploaded version/i)
+    await user.click(within(resetDialog).getByRole('button', { name: 'Reset' }))
     expect(screen.getByLabelText('name value')).toHaveValue('Dev')
     expect(screen.queryByLabelText('active value')).not.toBeInTheDocument()
+  })
+
+  it('uses the themed confirmation dialog for non-empty object removal', async () => {
+    const user = userEvent.setup()
+    await upload('{"database":{"host":""},"keep":true}')
+    await user.click(screen.getByRole('button', { name: 'Remove database' }))
+
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove database?' })
+    expect(dialog).toHaveTextContent(/everything inside it/i)
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByLabelText('database object')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Remove database' }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }))
+    expect(screen.queryByLabelText('database object')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('keep value')).toBeChecked()
   })
 
   it('blocks duplicate fields with an inline validation message', async () => {
@@ -102,6 +121,78 @@ describe('application workflow', () => {
     await user.type(screen.getByLabelText('Property name'), 'name')
     await user.click(screen.getByRole('button', { name: /^add$/i }))
     expect(screen.getByRole('alert')).toHaveTextContent(/already exists/i)
+  })
+
+  it('configures, previews, inserts, edits, and saves plugin-generated JSON', async () => {
+    const user = userEvent.setup()
+    await upload('{}')
+    await user.click(screen.getByRole('button', { name: /add field/i }))
+    await user.type(screen.getByLabelText('Property name'), 'request')
+
+    const initialType = screen.getByLabelText('Initial type')
+    expect(within(initialType).getByRole('option', { name: 'plugin' })).toBeInTheDocument()
+    await user.selectOptions(initialType, 'plugin')
+    expect(screen.getByLabelText('Select Plugin')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    expect(screen.getByRole('alert')).toHaveTextContent(/select a plugin/i)
+
+    await user.selectOptions(screen.getByLabelText('Select Plugin'), 'api-request')
+    expect(screen.getByText(/does not make a network request/i)).toBeInTheDocument()
+    const preview = screen.getByLabelText('Generated plugin data preview')
+    expect(preview).toHaveTextContent(/"method": "GET"/)
+    await user.selectOptions(screen.getByLabelText('Method'), 'POST')
+    expect(preview).toHaveTextContent(/"method": "POST"/)
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+
+    expect(screen.getByLabelText('request object')).toBeInTheDocument()
+    expect(screen.getByLabelText('method value')).toHaveValue('POST')
+    await user.type(screen.getByLabelText('url value'), 'https://example.test')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved !')
+    await waitFor(() => expect(JSON.parse(persisted.documents[0].savedJson!)).toEqual({
+      request: { method: 'POST', url: 'https://example.test', headers: {}, body: null },
+    }))
+  })
+
+  it('cancels plugin creation without changing the document', async () => {
+    const user = userEvent.setup()
+    await upload('{}')
+    await user.click(screen.getByRole('button', { name: /add field/i }))
+    await user.type(screen.getByLabelText('Property name'), 'discarded')
+    await user.selectOptions(screen.getByLabelText('Initial type'), 'plugin')
+    await user.selectOptions(screen.getByLabelText('Select Plugin'), 'custom-object-template')
+    await user.click(screen.getByRole('button', { name: /cancel/i }))
+    expect(screen.queryByLabelText('discarded object')).not.toBeInTheDocument()
+    expect(screen.getByText('This object is empty.')).toBeInTheDocument()
+  })
+
+  it('adds plugins at a nested path in only the active file and restores them', async () => {
+    const user = userEvent.setup()
+    const view = await upload('{"items":[{}]}', 'first.json')
+    await addFile(view.container, '{"items":[{}]}', 'second.json')
+    const item = screen.getByLabelText('Item 1 object')
+    await user.click(within(item).getByRole('button', { name: /add field/i }))
+    await user.type(within(item).getByLabelText('Property name'), 'environment')
+    await user.selectOptions(within(item).getByLabelText('Initial type'), 'plugin')
+    await user.selectOptions(within(item).getByLabelText('Select Plugin'), 'environment-variables')
+    await user.click(within(item).getByRole('button', { name: /^add$/i }))
+    expect(screen.getByLabelText('environment object')).toBeInTheDocument()
+    expect(screen.getByLabelText('variables object')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Search active JSON'), 'environment')
+    expect(screen.getByLabelText('environment object')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /open first.json/i }))
+    expect(screen.queryByLabelText('environment object')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /open second.json/i }))
+    expect(screen.getByLabelText('Search active JSON')).toHaveValue('environment')
+    expect(screen.getByLabelText('environment object')).toBeInTheDocument()
+
+    await waitFor(() => expect(persisted.documents.find((document) => document.filename === 'second.json')?.working).toEqual({
+      items: [{ environment: { variables: {} } }],
+    }))
+    view.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('environment object')).toBeInTheDocument()
   })
 
   it('enables download only for the active file latest saved version', async () => {
@@ -274,7 +365,9 @@ describe('application workflow', () => {
     await user.clear(screen.getByLabelText('name value'))
     await user.type(screen.getByLabelText('name value'), 'Dirty')
     await user.click(screen.getByRole('button', { name: /close second.json/i }))
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/discard its unsaved changes/i))
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove second.json?' })
+    expect(dialog).toHaveTextContent(/permanently discard those changes/i)
+    await user.click(within(dialog).getByRole('button', { name: 'Remove file' }))
     expect(screen.queryByRole('button', { name: /open second.json/i })).not.toBeInTheDocument()
     expect(screen.getByLabelText('name value')).toHaveValue('First')
     expect(screen.getByRole('button', { name: /open first.json/i })).toHaveAttribute('aria-current', 'page')

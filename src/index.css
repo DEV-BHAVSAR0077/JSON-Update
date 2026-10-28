@@ -23,6 +23,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { box-shadow: 0 
 .button:not(:disabled):active { transform: translateY(1px); }
 .button-primary { color: #fff; background: #2563eb; box-shadow: 0 5px 12px rgba(37, 99, 235, .18); }
 .button-primary:hover:not(:disabled) { background: #1d4ed8; }
+.button-danger { color: #fff; background: #dc2626; box-shadow: 0 5px 12px rgba(220,38,38,.18); }
+.button-danger:hover:not(:disabled) { background: #b91c1c; }
 .button-secondary { color: #334155; background: #fff; border-color: #dbe1ea; }
 .button-secondary:hover:not(:disabled), .button-ghost:hover:not(:disabled) { background: #f8fafc; border-color: #bdc7d5; }
 .button-dark { color: #fff; background: #172033; }
@@ -32,6 +34,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { box-shadow: 0 
 .brand-logo { display: block; width: 46px; height: 46px; object-fit: contain; }
 .brand-logo.small { width: 34px; height: 34px; }
 .eyebrow { display: block; margin-bottom: 12px; color: #2563eb; font-size: 11px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+
+.confirm-overlay { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(15,23,42,.52); backdrop-filter: blur(3px); animation: confirm-fade .14s ease-out; }
+.confirm-dialog { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 14px; width: min(440px, 100%); padding: 24px; background: #fff; border: 1px solid #e3e8ef; border-radius: 14px; box-shadow: 0 24px 70px rgba(15,23,42,.28); animation: confirm-rise .16s ease-out; }
+.confirm-icon { display: grid; width: 42px; height: 42px; place-items: center; color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 11px; }
+.confirm-content { padding: 1px 28px 0 0; }
+.confirm-content h2 { margin: 0 0 7px; color: #172033; font-size: 18px; line-height: 1.3; }
+.confirm-content p { margin: 0; color: #64748b; font-size: 13px; line-height: 1.6; }
+.confirm-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+.confirm-close { position: absolute; top: 14px; right: 14px; display: grid; width: 30px; height: 30px; padding: 0; place-items: center; color: #64748b; background: transparent; border: 0; border-radius: 7px; }
+.confirm-close:hover { color: #172033; background: #f1f5f9; }
+@keyframes confirm-fade { from { opacity: 0; } }
+@keyframes confirm-rise { from { opacity: 0; transform: translateY(6px) scale(.985); } }
 
 .upload-page { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(380px, .95fr); min-height: 100vh; background: #fff; }
 .upload-hero { display: flex; flex-direction: column; padding: 44px clamp(32px, 7vw, 112px); }
@@ -166,9 +180,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { box-shadow: 0 
 .add-button:hover { background: #eff6ff; }
 .add-form { display: grid; grid-template-columns: minmax(150px, 1fr) 120px auto; align-items: end; gap: 10px; margin-top: 10px; padding: 12px; background: #f8fafc; border: 1px solid #dbe1ea; border-radius: 9px; }
 .add-form label span { display: block; margin-bottom: 5px; color: #64748b; font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.add-form select { width: 100%; height: 34px; padding: 0 8px; background: #fff; border: 1px solid #dbe1ea; border-radius: 7px; font-size: 11px; }
+.add-form select { width: 100%; height: 34px; padding: 0 8px; background: #fff; border: 1px solid #dbe1ea; border-radius: 7px; font-size: 14px; }
 .add-form-actions { display: flex; gap: 4px; }
 .field-error { grid-column: 1 / -1; margin: 0; color: #b91c1c; font-size: 10px; }
+.plugin-fields { grid-column: 1 / -1; display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
+.plugin-fields > label { max-width: 320px; }
+.plugin-description { margin: 0; color: #64748b; font-size: 12px; line-height: 1.5; }
+.plugin-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 240px)); gap: 10px; }
+.plugin-preview { overflow: hidden; border: 1px solid #dbe1ea; border-radius: 8px; background: #fff; }
+.plugin-preview > strong { display: block; padding: 8px 10px; color: #475569; background: #f1f5f9; font-size: 10px; text-transform: uppercase; }
+.plugin-preview pre { max-height: 210px; margin: 0; padding: 12px; overflow: auto; color: #d6deeb; background: #172033; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.plugin-preview .field-error { padding: 10px; }
 
 @media (max-width: 1050px) {
   .upload-page { grid-template-columns: 1fr; }

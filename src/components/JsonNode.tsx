@@ -1,10 +1,13 @@
-import { memo, startTransition, useEffect, useRef, useState } from 'react'
+import { memo, startTransition, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import type { JsonObject, JsonPath, JsonType, JsonValue } from '../types'
 import { defaultForType, isNonEmptyContainer, matchesSearch, typeOfJson } from '../lib/json'
+import { createPluginValue, getDefaultPluginConfig, getRegisteredPlugin, getRegisteredPlugins, type PluginConfig } from '../lib/plugins'
+import type { ConfirmationRequest } from './ConfirmDialog'
 import { DraftTextInput } from './DraftTextInput'
 
 const types: JsonType[] = ['string', 'number', 'boolean', 'null', 'object', 'array']
+type CreationType = JsonType | 'plugin'
 
 interface JsonNodeProps {
   label: string
@@ -18,6 +21,7 @@ interface JsonNodeProps {
   onAddArray: (path: JsonPath, value: JsonValue) => void
   onMove: (path: JsonPath, from: number, to: number) => void
   onPendingChange: (pending: boolean) => void
+  onRequestConfirmation: (request: ConfirmationRequest) => void
 }
 
 interface AddValueProps {
@@ -29,19 +33,44 @@ interface AddValueProps {
 function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
   const [open, setOpen] = useState(false)
   const [key, setKey] = useState('')
-  const [type, setType] = useState<JsonType>('string')
+  const [type, setType] = useState<CreationType>('string')
+  const [pluginId, setPluginId] = useState('')
+  const [pluginConfig, setPluginConfig] = useState<PluginConfig>({})
   const [error, setError] = useState('')
+  const plugins = getRegisteredPlugins()
+  const selectedPlugin = getRegisteredPlugin(pluginId)
+  const generated = useMemo(() => {
+    if (type !== 'plugin' || !pluginId) return null
+    try {
+      return { value: createPluginValue(pluginId, pluginConfig), error: '' }
+    } catch (pluginError) {
+      return { value: null, error: pluginError instanceof Error ? pluginError.message : 'Plugin could not generate valid JSON.' }
+    }
+  }, [pluginConfig, pluginId, type])
+  const PluginConfigComponent = selectedPlugin?.ConfigComponent
+
+  const close = () => {
+    setOpen(false)
+    setKey('')
+    setType('string')
+    setPluginId('')
+    setPluginConfig({})
+    setError('')
+  }
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault()
     const property = key
     if (objectMode && !property.trim()) return setError('Enter a property name.')
     if (objectMode && existingKeys.includes(property)) return setError(`“${property}” already exists in this object.`)
-    onAdd(property, defaultForType(type))
-    setKey('')
-    setType('string')
-    setError('')
-    setOpen(false)
+    if (type === 'plugin' && !pluginId) return setError('Select a plugin.')
+    if (type === 'plugin' && generated?.error) return setError(generated.error)
+    try {
+      onAdd(property, type === 'plugin' ? generated!.value : defaultForType(type))
+      close()
+    } catch (insertionError) {
+      setError(insertionError instanceof Error ? insertionError.message : 'Could not add this field.')
+    }
   }
 
   if (!open) {
@@ -58,12 +87,69 @@ function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
       )}
       <label>
         <span>Initial type</span>
-        <select value={type} onChange={(event) => setType(event.target.value as JsonType)}>{types.map((item) => <option key={item}>{item}</option>)}</select>
+        <select value={type} onChange={(event) => { setType(event.target.value as CreationType); setError('') }}>
+          {[...types, 'plugin'].map((item) => <option key={item}>{item}</option>)}
+        </select>
       </label>
       <div className="add-form-actions">
         <button className="button button-primary button-small" type="submit">Add</button>
-        <button className="button button-ghost button-small" type="button" onClick={() => { setOpen(false); setError('') }}>Cancel</button>
+        <button className="button button-ghost button-small" type="button" onClick={close}>Cancel</button>
       </div>
+      {type === 'plugin' && (
+        <div className="plugin-fields">
+          <label>
+            <span>Select Plugin</span>
+            <select value={pluginId} onChange={(event) => {
+              const nextPlugin = getRegisteredPlugin(event.target.value)
+              setPluginId(event.target.value)
+              setPluginConfig(nextPlugin ? getDefaultPluginConfig(nextPlugin) : {})
+              setError('')
+            }}>
+              <option value="">Choose a plugin</option>
+              {plugins.map((plugin) => <option key={plugin.id} value={plugin.id}>{plugin.name}</option>)}
+            </select>
+          </label>
+          {selectedPlugin && (
+            <>
+              <p className="plugin-description">{selectedPlugin.description}</p>
+              {(selectedPlugin.configSchema?.length || PluginConfigComponent) && (
+                <div className="plugin-config">
+                  {selectedPlugin.configSchema?.map((field) => (
+                    <label key={field.key}>
+                      <span>{field.label}</span>
+                      {field.type === 'select' ? (
+                        <select value={String(pluginConfig[field.key] ?? '')} onChange={(event) => { setPluginConfig((current) => ({ ...current, [field.key]: event.target.value })); setError('') }}>
+                          {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type}
+                          min={field.min}
+                          max={field.max}
+                          step={field.step}
+                          value={String(pluginConfig[field.key] ?? '')}
+                          onChange={(event) => {
+                            const value = field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value
+                            setPluginConfig((current) => ({ ...current, [field.key]: value }))
+                            setError('')
+                          }}
+                        />
+                      )}
+                    </label>
+                  ))}
+                  {PluginConfigComponent && <PluginConfigComponent config={pluginConfig} onChange={(config) => { setPluginConfig(config); setError('') }} />}
+                </div>
+              )}
+              <div className="plugin-preview">
+                <strong>Generated data preview</strong>
+                {generated?.error
+                  ? <p className="field-error" role="alert">{generated.error}</p>
+                  : <pre aria-label="Generated plugin data preview"><code>{JSON.stringify(generated?.value, null, 2)}</code></pre>}
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {error && <p className="field-error" role="alert">{error}</p>}
     </form>
   )
@@ -133,10 +219,11 @@ function sameProps(left: JsonNodeProps, right: JsonNodeProps): boolean {
     && left.onAddArray === right.onAddArray
     && left.onMove === right.onMove
     && left.onPendingChange === right.onPendingChange
+    && left.onRequestConfirmation === right.onRequestConfirmation
 }
 
 function JsonNodeComponent(props: JsonNodeProps) {
-  const { label, value, path, query, root = false, onChange, onRemove, onAddObject, onAddArray, onMove, onPendingChange } = props
+  const { label, value, path, query, root = false, onChange, onRemove, onAddObject, onAddArray, onMove, onPendingChange, onRequestConfirmation } = props
   const type = typeOfJson(value)
   const [expanded, setExpanded] = useState(true)
   const structured = type === 'object' || type === 'array'
@@ -150,7 +237,15 @@ function JsonNodeComponent(props: JsonNodeProps) {
   useEffect(() => { if (query) setExpanded(true) }, [query])
 
   const remove = () => {
-    if (isNonEmptyContainer(value) && !window.confirm(`Remove ${label} and everything inside it?`)) return
+    if (isNonEmptyContainer(value)) {
+      onRequestConfirmation({
+        title: `Remove ${label}?`,
+        message: `This will permanently remove ${label} and everything inside it from the current document.`,
+        confirmLabel: 'Remove',
+        onConfirm: () => onRemove(path),
+      })
+      return
+    }
     onRemove(path)
   }
 
