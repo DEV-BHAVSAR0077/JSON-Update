@@ -4,7 +4,7 @@ import { DraftTextInput } from './components/DraftTextInput'
 import { ConfirmDialog, type ConfirmationRequest } from './components/ConfirmDialog'
 import { JsonUploader } from './components/JsonUploader'
 import { JsonNode } from './components/JsonNode'
-import type { JsonPath, JsonValue, WorkspaceDocument, WorkspaceState } from './types'
+import type { JsonPath, JsonValue, WorkspaceDocument, WorkspaceState, WorkspaceValue } from './types'
 import {
   MAX_FILE_SIZE,
   addArrayItem,
@@ -19,6 +19,8 @@ import {
   validateJsonTree,
 } from './lib/json'
 import { EMPTY_WORKSPACE, loadWorkspace, saveWorkspace } from './lib/workspace'
+import { resolveWorkspacePlugins } from './lib/pluginExecution'
+import { collectPluginNodeIds, hasPluginNodes, hydrateWorkspacePlugins, workspacePreviewValue } from './lib/pluginNodes'
 
 type Message = { kind: 'error' | 'success'; text: string }
 type PersistenceStatus = 'restoring' | 'saving' | 'saved' | 'error'
@@ -39,9 +41,12 @@ export default function App() {
   const [showPreview, setShowPreview] = useState(false)
   const [previewFontSize, setPreviewFontSize] = useState(11)
   const [hasPendingEdit, setHasPendingEdit] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
   const persistenceQueue = useRef<Promise<void>>(Promise.resolve())
   const persistenceVersion = useRef(0)
+  const workspaceRef = useRef(workspace)
+  workspaceRef.current = workspace
 
   const activeDocument = useMemo(
     () => workspace.documents.find((document) => document.id === workspace.activeDocumentId) ?? workspace.documents[0] ?? null,
@@ -54,7 +59,7 @@ export default function App() {
     loadWorkspace()
       .then(({ workspace: restored, warning }) => {
         if (!mounted) return
-        setWorkspace(restored)
+        setWorkspace(hydrateWorkspacePlugins(restored))
         setPersistenceStatus('saved')
         if (warning) setMessage({ kind: 'error', text: warning })
       })
@@ -126,6 +131,7 @@ export default function App() {
         size: file.size,
         original: data,
         working: data,
+        pluginNodeIds: [],
         savedJson: null,
         isDirty: false,
         searchQuery: '',
@@ -174,34 +180,58 @@ export default function App() {
   }
 
   const activeDocumentId = activeDocument?.id
-  const edit = useCallback((updater: (value: JsonValue) => JsonValue) => {
+  const edit = useCallback((updater: (value: WorkspaceValue) => WorkspaceValue) => {
     if (!activeDocumentId) return
-    updateDocument(activeDocumentId, (document) => ({
-      ...document,
-      working: updater(document.working),
-      isDirty: true,
-      updatedAt: Date.now(),
-    }))
+    updateDocument(activeDocumentId, (document) => {
+      const working = updater(document.working)
+      return {
+        ...document,
+        working,
+        pluginNodeIds: collectPluginNodeIds(working),
+        isDirty: true,
+        updatedAt: Date.now(),
+      }
+    })
     setMessage(null)
   }, [activeDocumentId, updateDocument])
 
   const save = () => {
-    if (!activeDocument) return
-    try {
-      validateJsonTree(activeDocument.working)
-      const savedJson = JSON.stringify(activeDocument.working, null, 2)
-      updateDocument(activeDocument.id, (document) => ({ ...document, savedJson, isDirty: false, updatedAt: Date.now() }))
-      setMessage({ kind: 'success', text: 'Saved !' })
-    } catch {
-      setMessage({ kind: 'error', text: 'Failed' })
+    if (!activeDocument || saving) return
+    const source = activeDocument
+    if (!hasPluginNodes(source.working)) {
+      try {
+        validateJsonTree(source.working as JsonValue)
+        const savedJson = JSON.stringify(source.working, null, 2)
+        updateDocument(source.id, (document) => ({ ...document, savedJson, isDirty: false, updatedAt: Date.now() }))
+        setMessage({ kind: 'success', text: 'Saved !' })
+      } catch {
+        setMessage({ kind: 'error', text: 'Failed' })
+      }
+      return
     }
+
+    setSaving(true)
+    setMessage(null)
+    void resolveWorkspacePlugins(source.working)
+      .then((resolved) => {
+        validateJsonTree(resolved)
+        const latest = workspaceRef.current.documents.find((document) => document.id === source.id)
+        if (!latest || latest.working !== source.working) throw new Error('The document changed while plugins were running. Save it again.')
+        const savedJson = JSON.stringify(resolved, null, 2)
+        updateDocument(source.id, (document) => ({ ...document, savedJson, isDirty: false, updatedAt: Date.now() }))
+        setMessage({ kind: 'success', text: 'Saved !' })
+      })
+      .catch((error) => {
+        setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Plugin execution failed.' })
+      })
+      .finally(() => setSaving(false))
   }
 
   const reset = () => {
     if (!activeDocument) return
     const restore = () => {
       const isDirty = activeDocument.savedJson !== null && activeDocument.savedJson !== JSON.stringify(activeDocument.original, null, 2)
-      updateDocument(activeDocument.id, (document) => ({ ...document, working: document.original, isDirty, updatedAt: Date.now() }))
+      updateDocument(activeDocument.id, (document) => ({ ...document, working: document.original, pluginNodeIds: [], isDirty, updatedAt: Date.now() }))
       setMessage(null)
     }
     if (activeDocument.isDirty) {
@@ -230,10 +260,10 @@ export default function App() {
     if (!activeDocumentId) return
     updateDocument(activeDocumentId, (document) => ({ ...document, searchQuery }))
   }, [activeDocumentId, updateDocument])
-  const changeValue = useCallback((path: JsonPath, value: JsonValue) => edit((root) => updateAtPath(root, path, value)), [edit])
+  const changeValue = useCallback((path: JsonPath, value: WorkspaceValue) => edit((root) => updateAtPath(root, path, value)), [edit])
   const removeValue = useCallback((path: JsonPath) => edit((root) => removeAtPath(root, path)), [edit])
-  const addObjectValue = useCallback((path: JsonPath, key: string, value: JsonValue) => edit((root) => addObjectField(root, path, key, value)), [edit])
-  const addArrayValue = useCallback((path: JsonPath, value: JsonValue) => edit((root) => addArrayItem(root, path, value)), [edit])
+  const addObjectValue = useCallback((path: JsonPath, key: string, value: WorkspaceValue) => edit((root) => addObjectField(root, path, key, value)), [edit])
+  const addArrayValue = useCallback((path: JsonPath, value: WorkspaceValue) => edit((root) => addArrayItem(root, path, value)), [edit])
   const moveArrayValue = useCallback((path: JsonPath, from: number, to: number) => edit((root) => moveArrayItem(root, path, from, to)), [edit])
   const handlePendingEdit = useCallback((pending: boolean) => {
     setHasPendingEdit(pending)
@@ -242,7 +272,11 @@ export default function App() {
   const working = activeDocument?.working
   const deferredWorking = useDeferredValue(working)
   const stats = useMemo(() => deferredWorking === undefined ? null : getJsonStats(deferredWorking), [deferredWorking])
-  const preview = useMemo(() => showPreview && working !== undefined ? JSON.stringify(working, null, 2) : '', [showPreview, working])
+  const preview = useMemo(() => {
+    if (!showPreview || working === undefined || !activeDocument) return ''
+    if (!activeDocument.isDirty && activeDocument.savedJson) return activeDocument.savedJson
+    return JSON.stringify(workspacePreviewValue(working), null, 2)
+  }, [activeDocument, showPreview, working])
 
   if (restoring) {
     return <main className="loading-page" aria-live="polite"><img className="brand-logo" src="/json-dev-logo.png" alt="JSON Studio logo" /><strong>Restoring your workspace…</strong></main>
@@ -263,8 +297,8 @@ export default function App() {
         <div className="app-brand"><img className="brand-logo small" src="/json-dev-logo.png" alt="JSON Studio logo" /><span>JSON Studio</span></div>
         <div className="header-actions">
           <button className="button button-secondary" type="button" onClick={reset} disabled={!activeDocument.isDirty && !hasPendingEdit}><RotateCcw size={16} aria-hidden="true" /> Reset</button>
-          <button className="button button-primary" type="button" onClick={save} disabled={!hasPendingEdit && !activeDocument.isDirty && activeDocument.savedJson !== null}><Save size={16} aria-hidden="true" /> Save changes</button>
-          <button className="button button-dark" type="button" onClick={download} disabled={!activeDocument.savedJson || activeDocument.isDirty || hasPendingEdit} title={activeDocument.isDirty || hasPendingEdit ? 'Save your latest changes before downloading' : undefined}><Download size={16} aria-hidden="true" /> Download JSON</button>
+          <button className="button button-primary" type="button" onClick={save} disabled={saving || (!hasPendingEdit && !activeDocument.isDirty && activeDocument.savedJson !== null)}><Save size={16} aria-hidden="true" /> {saving ? 'Saving…' : 'Save changes'}</button>
+          <button className="button button-dark" type="button" onClick={download} disabled={saving || !activeDocument.savedJson || activeDocument.isDirty || hasPendingEdit} title={activeDocument.isDirty || hasPendingEdit ? 'Save your latest changes before downloading' : undefined}><Download size={16} aria-hidden="true" /> Download JSON</button>
         </div>
       </header>
 

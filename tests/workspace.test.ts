@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EMPTY_WORKSPACE, normalizeWorkspace } from '../src/lib/workspace'
+import { createPluginNode, isPluginNode } from '../src/lib/pluginNodes'
 
 const validDocument = {
   id: 'doc-1',
@@ -7,6 +8,7 @@ const validDocument = {
   size: 20,
   original: { name: 'original' },
   working: { name: 'edited' },
+  pluginNodeIds: [],
   savedJson: null,
   isDirty: true,
   searchQuery: 'name',
@@ -46,5 +48,25 @@ describe('workspace recovery', () => {
     })
     expect(result.workspace.documents).toHaveLength(1)
     expect(result.workspace.documents[0].id).toBe('doc-1')
+  })
+
+  it('restores authorized plugin nodes with their response but leaves unlisted lookalikes unchanged', () => {
+    const plugin = createPluginNode('number-plugin', {}, undefined, [1, 2, 3])
+    const storedPlugin = structuredClone(plugin)
+    const result = normalizeWorkspace({
+      version: 1,
+      documents: [{ ...validDocument, working: { plugin: storedPlugin }, pluginNodeIds: [plugin.nodeId] }],
+      activeDocumentId: 'doc-1',
+    })
+    const restored = (result.workspace.documents[0].working as { plugin: { resolvedValue?: unknown } }).plugin
+    expect(isPluginNode(restored)).toBe(true)
+    expect(restored.resolvedValue).toEqual([1, 2, 3])
+
+    const untrusted = normalizeWorkspace({
+      version: 1,
+      documents: [{ ...validDocument, working: { plugin: storedPlugin }, pluginNodeIds: [] }],
+      activeDocumentId: 'doc-1',
+    })
+    expect(isPluginNode((untrusted.workspace.documents[0].working as { plugin: unknown }).plugin)).toBe(false)
   })
 })

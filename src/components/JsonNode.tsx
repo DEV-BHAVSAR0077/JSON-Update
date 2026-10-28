@@ -1,8 +1,10 @@
-import { memo, startTransition, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
-import type { JsonObject, JsonPath, JsonType, JsonValue } from '../types'
+import { memo, startTransition, useEffect, useRef, useState } from 'react'
+import { ChevronDown, ChevronUp, Plug, Plus, Trash2 } from 'lucide-react'
+import type { JsonPath, JsonType, JsonValue, PluginConfig, PluginNode, WorkspaceObject, WorkspaceValue } from '../types'
 import { defaultForType, isNonEmptyContainer, matchesSearch, typeOfJson } from '../lib/json'
-import { createPluginValue, getDefaultPluginConfig, getRegisteredPlugin, getRegisteredPlugins, type PluginConfig } from '../lib/plugins'
+import { executePluginNode } from '../lib/pluginExecution'
+import { createPluginNode, isPluginNode, resolvePluginNode, updatePluginNode } from '../lib/pluginNodes'
+import { getDefaultPluginConfig, getRegisteredPlugin, getRegisteredPlugins, type JsonPlugin } from '../lib/plugins'
 import type { ConfirmationRequest } from './ConfirmDialog'
 import { DraftTextInput } from './DraftTextInput'
 
@@ -11,14 +13,14 @@ type CreationType = JsonType | 'plugin'
 
 interface JsonNodeProps {
   label: string
-  value: JsonValue
+  value: WorkspaceValue
   path: JsonPath
   query: string
   root?: boolean
-  onChange: (path: JsonPath, value: JsonValue) => void
+  onChange: (path: JsonPath, value: WorkspaceValue) => void
   onRemove: (path: JsonPath) => void
-  onAddObject: (path: JsonPath, key: string, value: JsonValue) => void
-  onAddArray: (path: JsonPath, value: JsonValue) => void
+  onAddObject: (path: JsonPath, key: string, value: WorkspaceValue) => void
+  onAddArray: (path: JsonPath, value: WorkspaceValue) => void
   onMove: (path: JsonPath, from: number, to: number) => void
   onPendingChange: (pending: boolean) => void
   onRequestConfirmation: (request: ConfirmationRequest) => void
@@ -27,7 +29,45 @@ interface JsonNodeProps {
 interface AddValueProps {
   objectMode: boolean
   existingKeys?: string[]
-  onAdd: (key: string, value: JsonValue) => void
+  onAdd: (key: string, value: WorkspaceValue) => void
+}
+
+function PluginConfigFields({ plugin, config, disabled = false, onChange }: {
+  plugin: JsonPlugin
+  config: PluginConfig
+  disabled?: boolean
+  onChange: (config: PluginConfig) => void
+}) {
+  const ConfigComponent = plugin.ConfigComponent
+  return (
+    <div className="plugin-config">
+      {plugin.configSchema?.map((field) => (
+        <label key={field.key}>
+          <span>{field.label}</span>
+          {field.type === 'select' ? (
+            <select disabled={disabled} value={String(config[field.key] ?? '')} onChange={(event) => onChange({ ...config, [field.key]: event.target.value })}>
+              {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          ) : (
+            <input
+              disabled={disabled}
+              type={field.type}
+              min={field.min}
+              max={field.max}
+              step={field.step}
+              placeholder={field.placeholder}
+              value={String(config[field.key] ?? '')}
+              onChange={(event) => {
+                const value = field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value
+                onChange({ ...config, [field.key]: value })
+              }}
+            />
+          )}
+        </label>
+      ))}
+      {ConfigComponent && <ConfigComponent config={config} disabled={disabled} onChange={onChange} />}
+    </div>
+  )
 }
 
 function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
@@ -37,17 +77,9 @@ function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
   const [pluginId, setPluginId] = useState('')
   const [pluginConfig, setPluginConfig] = useState<PluginConfig>({})
   const [error, setError] = useState('')
+  const [adding, setAdding] = useState(false)
   const plugins = getRegisteredPlugins()
   const selectedPlugin = getRegisteredPlugin(pluginId)
-  const generated = useMemo(() => {
-    if (type !== 'plugin' || !pluginId) return null
-    try {
-      return { value: createPluginValue(pluginId, pluginConfig), error: '' }
-    } catch (pluginError) {
-      return { value: null, error: pluginError instanceof Error ? pluginError.message : 'Plugin could not generate valid JSON.' }
-    }
-  }, [pluginConfig, pluginId, type])
-  const PluginConfigComponent = selectedPlugin?.ConfigComponent
 
   const close = () => {
     setOpen(false)
@@ -58,18 +90,26 @@ function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
     setError('')
   }
 
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     const property = key
     if (objectMode && !property.trim()) return setError('Enter a property name.')
     if (objectMode && existingKeys.includes(property)) return setError(`“${property}” already exists in this object.`)
-    if (type === 'plugin' && !pluginId) return setError('Select a plugin.')
-    if (type === 'plugin' && generated?.error) return setError(generated.error)
+    if (type === 'plugin' && !selectedPlugin) return setError('Select a plugin.')
     try {
-      onAdd(property, type === 'plugin' ? generated!.value : defaultForType(type))
+      if (type !== 'plugin') {
+        onAdd(property, defaultForType(type))
+        close()
+        return
+      }
+      setAdding(true)
+      const node = createPluginNode(pluginId, pluginConfig)
+      onAdd(property, resolvePluginNode(node, await executePluginNode(node)))
       close()
     } catch (insertionError) {
       setError(insertionError instanceof Error ? insertionError.message : 'Could not add this field.')
+    } finally {
+      setAdding(false)
     }
   }
 
@@ -92,14 +132,14 @@ function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
         </select>
       </label>
       <div className="add-form-actions">
-        <button className="button button-primary button-small" type="submit">Add</button>
-        <button className="button button-ghost button-small" type="button" onClick={close}>Cancel</button>
+        <button className="button button-primary button-small" type="submit" disabled={adding}>{adding ? 'Adding…' : 'Add'}</button>
+        <button className="button button-ghost button-small" type="button" onClick={close} disabled={adding}>Cancel</button>
       </div>
       {type === 'plugin' && (
         <div className="plugin-fields">
           <label>
             <span>Select Plugin</span>
-            <select value={pluginId} onChange={(event) => {
+            <select value={pluginId} disabled={adding} onChange={(event) => {
               const nextPlugin = getRegisteredPlugin(event.target.value)
               setPluginId(event.target.value)
               setPluginConfig(nextPlugin ? getDefaultPluginConfig(nextPlugin) : {})
@@ -112,46 +152,123 @@ function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
           {selectedPlugin && (
             <>
               <p className="plugin-description">{selectedPlugin.description}</p>
-              {(selectedPlugin.configSchema?.length || PluginConfigComponent) && (
-                <div className="plugin-config">
-                  {selectedPlugin.configSchema?.map((field) => (
-                    <label key={field.key}>
-                      <span>{field.label}</span>
-                      {field.type === 'select' ? (
-                        <select value={String(pluginConfig[field.key] ?? '')} onChange={(event) => { setPluginConfig((current) => ({ ...current, [field.key]: event.target.value })); setError('') }}>
-                          {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
-                      ) : (
-                        <input
-                          type={field.type}
-                          min={field.min}
-                          max={field.max}
-                          step={field.step}
-                          value={String(pluginConfig[field.key] ?? '')}
-                          onChange={(event) => {
-                            const value = field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value
-                            setPluginConfig((current) => ({ ...current, [field.key]: value }))
-                            setError('')
-                          }}
-                        />
-                      )}
-                    </label>
-                  ))}
-                  {PluginConfigComponent && <PluginConfigComponent config={pluginConfig} onChange={(config) => { setPluginConfig(config); setError('') }} />}
-                </div>
-              )}
-              <div className="plugin-preview">
-                <strong>Generated data preview</strong>
-                {generated?.error
-                  ? <p className="field-error" role="alert">{generated.error}</p>
-                  : <pre aria-label="Generated plugin data preview"><code>{JSON.stringify(generated?.value, null, 2)}</code></pre>}
-              </div>
+              {(selectedPlugin.configSchema?.length || selectedPlugin.ConfigComponent)
+                ? <PluginConfigFields plugin={selectedPlugin} config={pluginConfig} disabled={adding} onChange={(config) => { setPluginConfig(config); setError('') }} />
+                : <p className="plugin-ready-note"><Plug size={14} aria-hidden="true" /> No configuration required. It will be added to the JSON immediately.</p>}
             </>
           )}
         </div>
       )}
       {error && <p className="field-error" role="alert">{error}</p>}
     </form>
+  )
+}
+
+function PluginNodeEditor({ label, node, path, root, onChange, onRemove, onRequestConfirmation }: {
+  label: string
+  node: PluginNode
+  path: JsonPath
+  root: boolean
+  onChange: JsonNodeProps['onChange']
+  onRemove: JsonNodeProps['onRemove']
+  onRequestConfirmation: JsonNodeProps['onRequestConfirmation']
+}) {
+  const plugin = getRegisteredPlugin(node.pluginId)
+  const plugins = getRegisteredPlugins()
+  const [expanded, setExpanded] = useState(true)
+  const [switching, setSwitching] = useState(false)
+  const [switchError, setSwitchError] = useState('')
+
+  const changePlugin = async (nextPlugin: JsonPlugin) => {
+    const nextNode = updatePluginNode(node, nextPlugin.id, getDefaultPluginConfig(nextPlugin))
+    setSwitching(true)
+    setSwitchError('')
+    try {
+      onChange(path, resolvePluginNode(nextNode, await executePluginNode(nextNode)))
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : 'Plugin execution failed.')
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const status = !plugin ? 'error' : switching ? 'running' : node.resolvedValue === undefined ? 'idle' : 'success'
+
+  const remove = () => onRequestConfirmation({
+    title: `Remove ${label}?`,
+    message: `This will remove the configured ${plugin?.name ?? node.pluginId} node from the current document.`,
+    confirmLabel: 'Remove',
+    onConfirm: () => onRemove(path),
+  })
+
+  return (
+    <section className={`plugin-node ${root ? 'json-root' : ''}`} aria-label={`${label} plugin`}>
+      <header className="plugin-node-header">
+        <button className="collapse-button" type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`}>
+          <ChevronDown className={expanded ? '' : 'collapsed'} size={18} aria-hidden="true" />
+        </button>
+        <div className="node-heading">
+          <strong title={label}>{label}</strong>
+          <span className="type-pill type-plugin">plugin</span>
+          <span className={`plugin-status status-${status}`} aria-live="polite">
+            {!plugin ? 'Unavailable' : switching ? 'Updating' : node.resolvedValue === undefined ? 'Pending' : 'Included'}
+          </span>
+        </div>
+        <select
+          className="type-select"
+          aria-label={`Change ${label} type`}
+          value="plugin"
+          onChange={(event) => {
+            const next = event.target.value
+            if (next !== 'plugin') onChange(path, defaultForType(next as JsonType))
+          }}
+        >
+          <option value="plugin">plugin</option>
+          {types.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+        {!root && <button className="icon-button danger" type="button" onClick={remove} aria-label={`Remove ${label}`}><Trash2 size={16} aria-hidden="true" /></button>}
+      </header>
+      {expanded && (
+        <div className="plugin-node-body">
+          <div className="plugin-identity">
+            <span className="plugin-icon"><Plug size={19} aria-hidden="true" /></span>
+            <div>
+              <strong>{plugin?.name ?? 'Unavailable plugin'}</strong>
+              <p>{plugin?.description ?? `The registered plugin “${node.pluginId}” is unavailable. Select another plugin or remove this node.`}</p>
+            </div>
+          </div>
+          <label className="plugin-selector">
+            <span>Selected plugin</span>
+            <select
+              value={plugin ? node.pluginId : ''}
+              disabled={switching}
+              onChange={(event) => {
+                const nextPlugin = getRegisteredPlugin(event.target.value)
+                if (nextPlugin) void changePlugin(nextPlugin)
+              }}
+            >
+              {!plugin && <option value="">Unavailable: {node.pluginId}</option>}
+              {plugins.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          {plugin && (plugin.configSchema?.length || plugin.ConfigComponent) && (
+            <PluginConfigFields
+              plugin={plugin}
+              config={node.config}
+              disabled={switching}
+              onChange={(config) => onChange(path, updatePluginNode(node, node.pluginId, config))}
+            />
+          )}
+          {switchError && <p className="plugin-run-error" role="alert">{switchError}</p>}
+          {node.resolvedValue !== undefined && (
+            <div className="plugin-result">
+              <strong>JSON value preview</strong>
+              <pre aria-label={`${plugin?.name ?? node.pluginId} JSON preview`}><code>{JSON.stringify(node.resolvedValue, null, 2)}</code></pre>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -222,15 +339,15 @@ function sameProps(left: JsonNodeProps, right: JsonNodeProps): boolean {
     && left.onRequestConfirmation === right.onRequestConfirmation
 }
 
-function JsonNodeComponent(props: JsonNodeProps) {
+function JsonValueNode(props: JsonNodeProps) {
   const { label, value, path, query, root = false, onChange, onRemove, onAddObject, onAddArray, onMove, onPendingChange, onRequestConfirmation } = props
-  const type = typeOfJson(value)
+  const type = typeOfJson(value as JsonValue)
   const [expanded, setExpanded] = useState(true)
   const structured = type === 'object' || type === 'array'
-  const entries: Array<readonly [string | number, JsonValue]> = type === 'object'
-    ? Object.entries(value as JsonObject)
+  const entries: Array<readonly [string | number, WorkspaceValue]> = type === 'object'
+    ? Object.entries(value as WorkspaceObject)
     : type === 'array'
-      ? (value as JsonValue[]).map((item, index) => [index, item] as const)
+      ? (value as WorkspaceValue[]).map((item, index) => [index, item] as const)
       : []
   const visibleEntries = entries.filter(([key, item]) => matchesSearch(String(key), item, query))
 
@@ -280,7 +397,7 @@ function JsonNodeComponent(props: JsonNodeProps) {
               </div>
             )) : <div className="empty-state">{query ? 'No matching fields in this section.' : `This ${type} is empty.`}</div>}
             {!query && (type === 'object'
-              ? <AddValue objectMode existingKeys={Object.keys(value as JsonObject)} onAdd={(key, item) => onAddObject(path, key, item)} />
+              ? <AddValue objectMode existingKeys={Object.keys(value as WorkspaceObject)} onAdd={(key, item) => onAddObject(path, key, item)} />
               : <AddValue objectMode={false} onAdd={(_key, item) => onAddArray(path, item)} />)}
           </div>
         )}
@@ -311,6 +428,23 @@ function JsonNodeComponent(props: JsonNodeProps) {
       {!root && <button className="icon-button danger" type="button" onClick={remove} aria-label={`Remove ${label}`}><Trash2 size={16} aria-hidden="true" /></button>}
     </div>
   )
+}
+
+function JsonNodeComponent(props: JsonNodeProps) {
+  if (isPluginNode(props.value)) {
+    return (
+      <PluginNodeEditor
+        label={props.label}
+        node={props.value}
+        path={props.path}
+        root={props.root ?? false}
+        onChange={props.onChange}
+        onRemove={props.onRemove}
+        onRequestConfirmation={props.onRequestConfirmation}
+      />
+    )
+  }
+  return <JsonValueNode {...props} />
 }
 
 export const JsonNode = memo(JsonNodeComponent, sameProps)

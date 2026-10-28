@@ -1,4 +1,5 @@
 import type { JsonValue, WorkspaceDocument, WorkspaceState } from '../types'
+import { hydrateWorkspacePlugins } from './pluginNodes'
 
 const DATABASE_NAME = 'json-studio'
 const STORE_NAME = 'workspace'
@@ -37,6 +38,11 @@ function isWorkspaceDocument(value: unknown): value is WorkspaceDocument {
     typeof document.updatedAt !== 'number' || !Number.isFinite(document.updatedAt) ||
     !isJsonValue(document.original) || !isJsonValue(document.working)
   ) return false
+  if (document.pluginNodeIds !== undefined && (
+    !Array.isArray(document.pluginNodeIds)
+    || !document.pluginNodeIds.every((id) => typeof id === 'string' && Boolean(id))
+    || new Set(document.pluginNodeIds).size !== document.pluginNodeIds.length
+  )) return false
   if (document.savedJson !== null && typeof document.savedJson !== 'string') return false
   if (typeof document.savedJson === 'string') {
     try {
@@ -58,13 +64,16 @@ export function normalizeWorkspace(value: unknown): WorkspaceLoadResult {
     return { workspace: EMPTY_WORKSPACE, warning: 'The saved workspace format is unsupported or corrupted.' }
   }
 
-  const documents = stored.documents.filter(isWorkspaceDocument)
+  const documents = stored.documents.filter(isWorkspaceDocument).map((document) => ({
+    ...document,
+    pluginNodeIds: document.pluginNodeIds ?? [],
+  }))
   const activeDocumentId = typeof stored.activeDocumentId === 'string' && documents.some((document) => document.id === stored.activeDocumentId)
     ? stored.activeDocumentId
     : documents[0]?.id ?? null
   const recovered = documents.length !== stored.documents.length
   return {
-    workspace: { version: 1, documents, activeDocumentId },
+    workspace: hydrateWorkspacePlugins({ version: 1, documents, activeDocumentId }),
     warning: recovered ? 'Some damaged documents could not be restored. The remaining workspace is still available.' : null,
   }
 }

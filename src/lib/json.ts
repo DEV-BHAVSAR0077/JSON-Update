@@ -1,4 +1,4 @@
-import type { JsonObject, JsonPath, JsonStats, JsonType, JsonValue } from '../types'
+import type { JsonPath, JsonStats, JsonType, JsonValue, WorkspaceObject, WorkspaceValue } from '../types'
 
 export const MAX_FILE_SIZE = 5 * 1024 * 1024
 
@@ -12,37 +12,38 @@ export function defaultForType(type: JsonType): JsonValue {
   return { string: '', number: 0, boolean: false, null: null, object: {}, array: [] }[type]
 }
 
-export function getAtPath(root: JsonValue, path: JsonPath): JsonValue {
-  return path.reduce<JsonValue>((node, segment) => {
+export function getAtPath(root: WorkspaceValue, path: JsonPath): WorkspaceValue {
+  return path.reduce<WorkspaceValue>((node, segment) => {
     if (typeof segment === 'number' && Array.isArray(node)) return node[segment]
-    if (typeof segment === 'string' && node !== null && typeof node === 'object' && !Array.isArray(node)) return node[segment]
+    if (typeof segment === 'string' && node !== null && typeof node === 'object' && !Array.isArray(node)) return (node as WorkspaceObject)[segment]
     throw new Error('Invalid JSON path')
   }, root)
 }
 
-export function updateAtPath(root: JsonValue, path: JsonPath, value: JsonValue): JsonValue {
+export function updateAtPath(root: WorkspaceValue, path: JsonPath, value: WorkspaceValue): WorkspaceValue {
   if (path.length === 0) return value
   const [segment, ...rest] = path
   if (typeof segment === 'number' && Array.isArray(root)) {
     return root.map((item, index) => (index === segment ? updateAtPath(item, rest, value) : item))
   }
   if (typeof segment === 'string' && root !== null && typeof root === 'object' && !Array.isArray(root)) {
-    return { ...root, [segment]: updateAtPath(root[segment], rest, value) }
+    const object = root as WorkspaceObject
+    return { ...object, [segment]: updateAtPath(object[segment], rest, value) }
   }
   throw new Error('Invalid JSON path')
 }
 
-export function removeAtPath(root: JsonValue, path: JsonPath): JsonValue {
+export function removeAtPath(root: WorkspaceValue, path: JsonPath): WorkspaceValue {
   if (path.length === 0) throw new Error('The root value cannot be removed')
   const parentPath = path.slice(0, -1)
   const key = path.at(-1)!
   const parent = getAtPath(root, parentPath)
-  let nextParent: JsonValue
+  let nextParent: WorkspaceValue
 
   if (typeof key === 'number' && Array.isArray(parent)) {
     nextParent = parent.filter((_, index) => index !== key)
   } else if (typeof key === 'string' && parent !== null && typeof parent === 'object' && !Array.isArray(parent)) {
-    const remaining: JsonObject = { ...parent }
+    const remaining: WorkspaceObject = { ...(parent as WorkspaceObject) }
     delete remaining[key]
     nextParent = remaining
   } else {
@@ -51,20 +52,20 @@ export function removeAtPath(root: JsonValue, path: JsonPath): JsonValue {
   return updateAtPath(root, parentPath, nextParent)
 }
 
-export function addObjectField(root: JsonValue, path: JsonPath, key: string, value: JsonValue): JsonValue {
+export function addObjectField(root: WorkspaceValue, path: JsonPath, key: string, value: WorkspaceValue): WorkspaceValue {
   const parent = getAtPath(root, path)
   if (parent === null || typeof parent !== 'object' || Array.isArray(parent)) throw new Error('Target is not an object')
   if (Object.prototype.hasOwnProperty.call(parent, key)) throw new Error(`“${key}” already exists in this object`)
   return updateAtPath(root, path, { ...parent, [key]: value })
 }
 
-export function addArrayItem(root: JsonValue, path: JsonPath, value: JsonValue): JsonValue {
+export function addArrayItem(root: WorkspaceValue, path: JsonPath, value: WorkspaceValue): WorkspaceValue {
   const parent = getAtPath(root, path)
   if (!Array.isArray(parent)) throw new Error('Target is not an array')
   return updateAtPath(root, path, [...parent, value])
 }
 
-export function moveArrayItem(root: JsonValue, path: JsonPath, from: number, to: number): JsonValue {
+export function moveArrayItem(root: WorkspaceValue, path: JsonPath, from: number, to: number): WorkspaceValue {
   const parent = getAtPath(root, path)
   if (!Array.isArray(parent) || to < 0 || to >= parent.length) return root
   const next = [...parent]
@@ -102,10 +103,11 @@ export function validateJsonTree(value: JsonValue): void {
   JSON.stringify(value)
 }
 
-export function getJsonStats(value: JsonValue): JsonStats {
+export function getJsonStats(value: WorkspaceValue): JsonStats {
   const stats: JsonStats = { properties: 0, objects: 0, arrays: 0, depth: 0 }
-  const visit = (node: JsonValue, depth: number): void => {
+  const visit = (node: WorkspaceValue, depth: number): void => {
     stats.depth = Math.max(stats.depth, depth)
+    if (node !== null && typeof node === 'object' && !Array.isArray(node) && '__jsonDevNode' in node && node.__jsonDevNode === 'plugin') return
     if (Array.isArray(node)) {
       stats.arrays += 1
       node.forEach((item) => visit(item, depth + 1))
@@ -119,10 +121,13 @@ export function getJsonStats(value: JsonValue): JsonStats {
   return stats
 }
 
-export function matchesSearch(label: string, value: JsonValue, query: string): boolean {
+export function matchesSearch(label: string, value: WorkspaceValue, query: string): boolean {
   if (!query) return true
   const target = query.toLocaleLowerCase()
   if (label.toLocaleLowerCase().includes(target)) return true
+  if (value !== null && typeof value === 'object' && !Array.isArray(value) && '__jsonDevNode' in value && value.__jsonDevNode === 'plugin') {
+    return String(value.pluginId).toLocaleLowerCase().includes(target)
+  }
   if (Array.isArray(value)) return value.some((item, index) => matchesSearch(String(index), item, target))
   if (value !== null && typeof value === 'object') {
     return Object.entries(value).some(([key, item]) => matchesSearch(key, item, target))
@@ -140,6 +145,6 @@ export function downloadName(filename: string): string {
   return `${base}_updated.json`
 }
 
-export function isNonEmptyContainer(value: JsonValue): value is JsonObject | JsonValue[] {
+export function isNonEmptyContainer(value: WorkspaceValue): value is WorkspaceObject | WorkspaceValue[] {
   return value !== null && typeof value === 'object' && Object.keys(value).length > 0
 }

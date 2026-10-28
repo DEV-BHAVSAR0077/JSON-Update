@@ -123,35 +123,53 @@ describe('application workflow', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/already exists/i)
   })
 
-  it('configures, previews, inserts, edits, and saves plugin-generated JSON', async () => {
+  it('executes a plugin while adding it and includes its value in JSON immediately', async () => {
     const user = userEvent.setup()
     await upload('{}')
     await user.click(screen.getByRole('button', { name: /add field/i }))
-    await user.type(screen.getByLabelText('Property name'), 'request')
+    await user.type(screen.getByLabelText('Property name'), 'numbers')
 
     const initialType = screen.getByLabelText('Initial type')
     expect(within(initialType).getByRole('option', { name: 'plugin' })).toBeInTheDocument()
     await user.selectOptions(initialType, 'plugin')
-    expect(screen.getByLabelText('Select Plugin')).toBeInTheDocument()
+    const pluginSelect = screen.getByLabelText('Select Plugin')
+    expect(within(pluginSelect).getByRole('option', { name: 'Number Plugin' })).toBeInTheDocument()
+    expect(within(pluginSelect).queryByRole('option', { name: 'REST API Plugin' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /^add$/i }))
     expect(screen.getByRole('alert')).toHaveTextContent(/select a plugin/i)
 
-    await user.selectOptions(screen.getByLabelText('Select Plugin'), 'api-request')
-    expect(screen.getByText(/does not make a network request/i)).toBeInTheDocument()
-    const preview = screen.getByLabelText('Generated plugin data preview')
-    expect(preview).toHaveTextContent(/"method": "GET"/)
-    await user.selectOptions(screen.getByLabelText('Method'), 'POST')
-    expect(preview).toHaveTextContent(/"method": "POST"/)
+    await user.selectOptions(pluginSelect, 'number-plugin')
+    expect(screen.getByText(/numbers 1 through 10/i)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /^add$/i }))
 
-    expect(screen.getByLabelText('request object')).toBeInTheDocument()
-    expect(screen.getByLabelText('method value')).toHaveValue('POST')
-    await user.type(screen.getByLabelText('url value'), 'https://example.test')
+    const node = await screen.findByLabelText('numbers plugin')
+    expect(within(node).getByText('Number Plugin', { selector: 'strong' })).toBeInTheDocument()
+    expect(within(node).getByText('Included')).toBeInTheDocument()
+    expect(within(node).getByLabelText('Number Plugin JSON preview')).toHaveTextContent('10')
+    expect(screen.queryByText('__jsonDevNode')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /show json preview/i }))
+    expect(document.querySelector('.preview-panel pre')).toHaveTextContent('"numbers": [')
+    expect(document.querySelector('.preview-panel pre')).not.toHaveTextContent('__jsonDevNode')
+    expect(document.querySelector('.preview-panel pre')).not.toHaveTextContent('number-plugin')
+
     await user.click(screen.getByRole('button', { name: /save changes/i }))
-    expect(await screen.findByRole('status')).toHaveTextContent('Saved !')
-    await waitFor(() => expect(JSON.parse(persisted.documents[0].savedJson!)).toEqual({
-      request: { method: 'POST', url: 'https://example.test', headers: {}, body: null },
-    }))
+    expect(await screen.findByText('Saved !', { selector: '.inline-message' })).toBeInTheDocument()
+    expect(screen.getByLabelText('numbers plugin')).toBeInTheDocument()
+    await waitFor(() => expect(JSON.parse(persisted.documents[0].savedJson!)).toEqual({ numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }))
+    expect(persisted.documents[0].working).toMatchObject({ numbers: { pluginId: 'number-plugin', resolvedValue: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } })
+
+    const createUrl = vi.fn().mockReturnValue('blob:plugin')
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createUrl })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    await user.click(screen.getByRole('button', { name: /download json/i }))
+    const downloaded = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(createUrl.mock.calls[0][0] as Blob)
+    })
+    expect(downloaded).toBe(JSON.stringify({ numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, null, 2))
   })
 
   it('cancels plugin creation without changing the document', async () => {
@@ -160,39 +178,67 @@ describe('application workflow', () => {
     await user.click(screen.getByRole('button', { name: /add field/i }))
     await user.type(screen.getByLabelText('Property name'), 'discarded')
     await user.selectOptions(screen.getByLabelText('Initial type'), 'plugin')
-    await user.selectOptions(screen.getByLabelText('Select Plugin'), 'custom-object-template')
+    await user.selectOptions(screen.getByLabelText('Select Plugin'), 'object-plugin')
     await user.click(screen.getByRole('button', { name: /cancel/i }))
-    expect(screen.queryByLabelText('discarded object')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('discarded plugin')).not.toBeInTheDocument()
     expect(screen.getByText('This object is empty.')).toBeInTheDocument()
   })
 
-  it('adds plugins at a nested path in only the active file and restores them', async () => {
+  it('keeps plugin cards isolated by active file and restores their responses', async () => {
     const user = userEvent.setup()
-    const view = await upload('{"items":[{}]}', 'first.json')
-    await addFile(view.container, '{"items":[{}]}', 'second.json')
-    const item = screen.getByLabelText('Item 1 object')
-    await user.click(within(item).getByRole('button', { name: /add field/i }))
-    await user.type(within(item).getByLabelText('Property name'), 'environment')
-    await user.selectOptions(within(item).getByLabelText('Initial type'), 'plugin')
-    await user.selectOptions(within(item).getByLabelText('Select Plugin'), 'environment-variables')
-    await user.click(within(item).getByRole('button', { name: /^add$/i }))
-    expect(screen.getByLabelText('environment object')).toBeInTheDocument()
-    expect(screen.getByLabelText('variables object')).toBeInTheDocument()
+    const view = await upload('{"items":[]}', 'first.json')
+    await addFile(view.container, '{"items":[]}', 'second.json')
+    const items = screen.getByLabelText('items array')
+    await user.click(within(items).getByRole('button', { name: /add item/i }))
+    await user.selectOptions(within(items).getByLabelText('Initial type'), 'plugin')
+    await user.selectOptions(within(items).getByLabelText('Select Plugin'), 'string-plugin')
+    await user.click(within(items).getByRole('button', { name: /^add$/i }))
+    const pluginNode = await screen.findByLabelText('Item 1 plugin')
+    expect(within(pluginNode).getByLabelText('String Plugin JSON preview')).toHaveTextContent('Hello from JSON Dev')
 
-    await user.type(screen.getByLabelText('Search active JSON'), 'environment')
-    expect(screen.getByLabelText('environment object')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Search active JSON'), 'string')
+    expect(screen.getByLabelText('Item 1 plugin')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /open first.json/i }))
-    expect(screen.queryByLabelText('environment object')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Item 1 plugin')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /open second.json/i }))
-    expect(screen.getByLabelText('Search active JSON')).toHaveValue('environment')
-    expect(screen.getByLabelText('environment object')).toBeInTheDocument()
+    expect(screen.getByLabelText('Search active JSON')).toHaveValue('string')
+    expect(screen.getByLabelText('Item 1 plugin')).toBeInTheDocument()
 
-    await waitFor(() => expect(persisted.documents.find((document) => document.filename === 'second.json')?.working).toEqual({
-      items: [{ environment: { variables: {} } }],
+    await waitFor(() => expect(persisted.documents.find((document) => document.filename === 'second.json')?.working).toMatchObject({
+      items: [{ pluginId: 'string-plugin', resolvedValue: 'Hello from JSON Dev' }],
     }))
     view.unmount()
     render(<App />)
-    expect(await screen.findByLabelText('environment object')).toBeInTheDocument()
+    const restored = await screen.findByLabelText('Item 1 plugin')
+    expect(within(restored).getByLabelText('String Plugin JSON preview')).toHaveTextContent('Hello from JSON Dev')
+  })
+
+  it('restores an unavailable plugin node and blocks serialization', async () => {
+    persisted = {
+      version: 1,
+      activeDocumentId: 'missing-plugin-document',
+      documents: [{
+        id: 'missing-plugin-document',
+        filename: 'plugins.json',
+        size: 1,
+        original: {},
+        working: {
+          missing: { __jsonDevNode: 'plugin', nodeId: 'missing-node', pluginId: 'removed-plugin', config: {} },
+        },
+        pluginNodeIds: ['missing-node'],
+        savedJson: null,
+        isDirty: true,
+        searchQuery: '',
+        updatedAt: 1,
+      }],
+    }
+    render(<App />)
+    const node = await screen.findByLabelText('missing plugin')
+    expect(within(node).getByText('Unavailable')).toBeInTheDocument()
+    expect(within(node).queryByRole('button', { name: /run plugin/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not registered.*\$\.missing/i)
+    expect(screen.getByLabelText('missing plugin')).toBeInTheDocument()
   })
 
   it('enables download only for the active file latest saved version', async () => {
@@ -259,7 +305,7 @@ describe('application workflow', () => {
     persisted = {
       version: 1,
       activeDocumentId: 'invalid',
-      documents: [{ id: 'invalid', filename: 'invalid.json', size: 1, original: 1, working: Infinity, savedJson: null, isDirty: true, searchQuery: '', updatedAt: 1 }],
+      documents: [{ id: 'invalid', filename: 'invalid.json', size: 1, original: 1, working: Infinity, pluginNodeIds: [], savedJson: null, isDirty: true, searchQuery: '', updatedAt: 1 }],
     }
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /save changes/i }))

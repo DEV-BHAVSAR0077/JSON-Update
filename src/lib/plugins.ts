@@ -1,9 +1,7 @@
 import type { ComponentType } from 'react'
-import type { JsonType, JsonValue } from '../types'
-import { typeOfJson } from './json'
+import type { JsonType, JsonValue, PluginConfig, PluginConfigValue } from '../types'
 
-export type PluginConfigValue = string | number | boolean
-export type PluginConfig = Record<string, PluginConfigValue>
+export type { PluginConfig, PluginConfigValue } from '../types'
 
 export interface PluginConfigField {
   key: string
@@ -14,11 +12,17 @@ export interface PluginConfigField {
   min?: number
   max?: number
   step?: number
+  placeholder?: string
 }
 
 export interface PluginConfigComponentProps {
   config: PluginConfig
+  disabled?: boolean
   onChange: (config: PluginConfig) => void
+}
+
+export interface PluginExecutionContext {
+  signal: AbortSignal
 }
 
 export interface JsonPlugin {
@@ -26,9 +30,12 @@ export interface JsonPlugin {
   name: string
   description: string
   version: string
-  outputType: JsonType
-  createDefault: (config: PluginConfig) => unknown
+  defaultConfig?: PluginConfig
   configSchema?: readonly PluginConfigField[]
+  outputType?: JsonType
+  timeout?: number | ((config: PluginConfig) => number)
+  execute: (config: PluginConfig, context: PluginExecutionContext) => unknown | Promise<unknown>
+  validateConfig?: (config: PluginConfig) => string | null
   validate?: (value: JsonValue, config: PluginConfig) => string | null
   ConfigComponent?: ComponentType<PluginConfigComponentProps>
 }
@@ -36,10 +43,11 @@ export interface JsonPlugin {
 const registry = new Map<string, JsonPlugin>()
 const jsonTypes: JsonType[] = ['string', 'number', 'boolean', 'null', 'object', 'array']
 
-/** Register trusted, locally imported plugins during application startup. */
+/** Register trusted, statically imported plugins during application startup. */
 export function registerPlugin(plugin: JsonPlugin): void {
   if (!plugin.id.trim() || !plugin.name.trim() || !plugin.version.trim()) throw new Error('Plugins require an id, name, and version.')
-  if (!jsonTypes.includes(plugin.outputType)) throw new Error(`Plugin “${plugin.name}” has an unsupported output type.`)
+  if (plugin.outputType && !jsonTypes.includes(plugin.outputType)) throw new Error(`Plugin “${plugin.name}” has an unsupported output type.`)
+  if (typeof plugin.execute !== 'function') throw new Error(`Plugin “${plugin.name}” requires an execute function.`)
   if (registry.has(plugin.id)) throw new Error(`Plugin id “${plugin.id}” is already registered.`)
   registry.set(plugin.id, plugin)
 }
@@ -53,10 +61,13 @@ export function getRegisteredPlugin(id: string): JsonPlugin | undefined {
 }
 
 export function getDefaultPluginConfig(plugin: JsonPlugin): PluginConfig {
-  return Object.fromEntries((plugin.configSchema ?? []).map((field) => [field.key, field.defaultValue]))
+  return {
+    ...Object.fromEntries((plugin.configSchema ?? []).map((field) => [field.key, field.defaultValue])),
+    ...plugin.defaultConfig,
+  }
 }
 
-function validateConfig(plugin: JsonPlugin, config: PluginConfig): void {
+export function validatePluginConfig(plugin: JsonPlugin, config: PluginConfig): void {
   for (const field of plugin.configSchema ?? []) {
     const value = config[field.key]
     if (field.type === 'number') {
@@ -70,9 +81,11 @@ function validateConfig(plugin: JsonPlugin, config: PluginConfig): void {
       throw new Error(`Choose a valid ${field.label.toLocaleLowerCase()}.`)
     }
   }
+  const error = plugin.validateConfig?.(config)
+  if (error) throw new Error(error)
 }
 
-function assertJsonValue(value: unknown, ancestors = new WeakSet<object>()): asserts value is JsonValue {
+export function assertJsonValue(value: unknown, ancestors = new WeakSet<object>()): asserts value is JsonValue {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new Error('Generated numbers must be finite.')
@@ -100,62 +113,46 @@ function assertJsonValue(value: unknown, ancestors = new WeakSet<object>()): ass
   ancestors.delete(value)
 }
 
-export function createPluginValue(pluginId: string, config: PluginConfig): JsonValue {
-  const plugin = getRegisteredPlugin(pluginId)
-  if (!plugin) throw new Error('The selected plugin is not registered.')
-  validateConfig(plugin, config)
-
-  let value: unknown
-  try {
-    value = plugin.createDefault(config)
-  } catch (error) {
-    throw new Error(`Plugin could not generate data: ${error instanceof Error ? error.message : 'Unknown error.'}`)
-  }
-  assertJsonValue(value)
-  if (typeOfJson(value) !== plugin.outputType) throw new Error(`Plugin must generate a JSON ${plugin.outputType}.`)
-  const validationError = plugin.validate?.(value, config)
-  if (validationError) throw new Error(validationError)
-  return value
-}
-
 const builtInPlugins = [
   {
-    id: 'api-request',
-    name: 'API Request Object',
-    description: 'Creates an editable HTTP request structure. It does not make a network request.',
+    id: 'number-plugin',
+    name: 'Number Plugin',
+    description: 'Returns the numbers 1 through 10 as a JSON array.',
     version: '1.0.0',
-    outputType: 'object',
-    configSchema: [{
-      key: 'method', label: 'Method', type: 'select', defaultValue: 'GET',
-      options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => ({ label: method, value: method })),
-    }],
-    createDefault: (config: PluginConfig) => ({ method: config.method, url: '', headers: {}, body: null }),
+    outputType: 'array',
+    execute: () => Array.from({ length: 10 }, (_, index) => index + 1),
   },
   {
-    id: 'database-config',
-    name: 'Database Configuration',
-    description: 'Creates connection settings without storing a password or other secret.',
+    id: 'string-plugin',
+    name: 'String Plugin',
+    description: 'Returns a sample JSON string.',
     version: '1.0.0',
-    outputType: 'object',
-    configSchema: [{ key: 'port', label: 'Port', type: 'number', defaultValue: 5432, min: 1, max: 65535, step: 1 }],
-    createDefault: (config: PluginConfig) => ({ host: '', port: config.port, database: '', username: '' }),
-    validate: (_value: JsonValue, config: PluginConfig) => Number.isInteger(config.port) ? null : 'Port must be a whole number.',
+    outputType: 'string',
+    execute: () => 'Hello from JSON Dev',
   },
   {
-    id: 'environment-variables',
-    name: 'Environment Variables',
-    description: 'Creates an empty variables object that can be populated with the existing editor.',
+    id: 'object-plugin',
+    name: 'Object Plugin',
+    description: 'Returns a sample object containing an ID, name, and active status.',
     version: '1.0.0',
     outputType: 'object',
-    createDefault: () => ({ variables: {} }),
+    execute: () => ({ id: 1, name: 'Sample', active: true }),
   },
   {
-    id: 'custom-object-template',
-    name: 'Custom Object Template',
-    description: 'Demonstrates a trusted predefined template registered outside the field-creation UI.',
+    id: 'array-of-objects-plugin',
+    name: 'Array of Objects Plugin',
+    description: 'Returns two sample objects in an array.',
+    version: '1.0.0',
+    outputType: 'array',
+    execute: () => [{ id: 1, name: 'Item 1' }, { id: 2, name: 'Item 2' }],
+  },
+  {
+    id: 'current-date-time-plugin',
+    name: 'Current Date and Time Plugin',
+    description: 'Generates a fresh ISO 8601 timestamp each time it runs.',
     version: '1.0.0',
     outputType: 'object',
-    createDefault: () => ({ title: '', enabled: true, options: {} }),
+    execute: () => ({ timestamp: new Date().toISOString() }),
   },
 ] satisfies JsonPlugin[]
 
