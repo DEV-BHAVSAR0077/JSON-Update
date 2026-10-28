@@ -37,6 +37,7 @@ export default function App() {
   const [message, setMessage] = useState<Message | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const [previewFontSize, setPreviewFontSize] = useState(11)
+  const [hasPendingEdit, setHasPendingEdit] = useState(false)
   const persistenceQueue = useRef<Promise<void>>(Promise.resolve())
   const persistenceVersion = useRef(0)
 
@@ -95,12 +96,12 @@ export default function App() {
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (!hasAnyUnsavedChanges) return
+      if (!hasAnyUnsavedChanges && !hasPendingEdit) return
       event.preventDefault()
     }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [hasAnyUnsavedChanges])
+  }, [hasAnyUnsavedChanges, hasPendingEdit])
 
   const updateDocument = useCallback((id: string, updater: (document: WorkspaceDocument) => WorkspaceDocument) => {
     setWorkspace((current) => ({
@@ -208,6 +209,10 @@ export default function App() {
   const addObjectValue = useCallback((path: JsonPath, key: string, value: JsonValue) => edit((root) => addObjectField(root, path, key, value)), [edit])
   const addArrayValue = useCallback((path: JsonPath, value: JsonValue) => edit((root) => addArrayItem(root, path, value)), [edit])
   const moveArrayValue = useCallback((path: JsonPath, from: number, to: number) => edit((root) => moveArrayItem(root, path, from, to)), [edit])
+  const handlePendingEdit = useCallback((pending: boolean) => {
+    setHasPendingEdit(pending)
+    if (pending) setMessage(null)
+  }, [])
   const working = activeDocument?.working
   const deferredWorking = useDeferredValue(working)
   const stats = useMemo(() => deferredWorking === undefined ? null : getJsonStats(deferredWorking), [deferredWorking])
@@ -231,9 +236,9 @@ export default function App() {
       <header className="app-header">
         <div className="app-brand"><img className="brand-logo small" src="/json-dev-logo.png" alt="JSON Studio logo" /><span>JSON Studio</span></div>
         <div className="header-actions">
-          <button className="button button-secondary" type="button" onClick={reset} disabled={!activeDocument.isDirty}><RotateCcw size={16} aria-hidden="true" /> Reset</button>
-          <button className="button button-primary" type="button" onClick={save} disabled={!activeDocument.isDirty && activeDocument.savedJson !== null}><Save size={16} aria-hidden="true" /> Save changes</button>
-          <button className="button button-dark" type="button" onClick={download} disabled={!activeDocument.savedJson || activeDocument.isDirty} title={activeDocument.isDirty ? 'Save your latest changes before downloading' : undefined}><Download size={16} aria-hidden="true" /> Download JSON</button>
+          <button className="button button-secondary" type="button" onClick={reset} disabled={!activeDocument.isDirty && !hasPendingEdit}><RotateCcw size={16} aria-hidden="true" /> Reset</button>
+          <button className="button button-primary" type="button" onClick={save} disabled={!hasPendingEdit && !activeDocument.isDirty && activeDocument.savedJson !== null}><Save size={16} aria-hidden="true" /> Save changes</button>
+          <button className="button button-dark" type="button" onClick={download} disabled={!activeDocument.savedJson || activeDocument.isDirty || hasPendingEdit} title={activeDocument.isDirty || hasPendingEdit ? 'Save your latest changes before downloading' : undefined}><Download size={16} aria-hidden="true" /> Download JSON</button>
         </div>
       </header>
 
@@ -254,12 +259,13 @@ export default function App() {
             <div className="document-list" role="list" aria-label="Open JSON files">
               {workspace.documents.map((document, index) => {
                 const active = document.id === activeDocument.id
+                const dirty = document.isDirty || (active && hasPendingEdit)
                 return (
                   <div className={`file-card ${active ? 'active' : ''}`} role="listitem" key={document.id}>
                     <button className="file-select" type="button" onClick={() => selectDocument(document.id)} aria-current={active ? 'page' : undefined} aria-label={`Open ${document.filename}, document ${index + 1}`}>
                       <span className="file-icon"><FileJson size={20} aria-hidden="true" /></span>
                       <span className="file-details"><strong title={document.filename}>{document.filename}</strong><span>{formatBytes(document.size)} · Document {index + 1}</span></span>
-                      <span className={`status-dot ${document.isDirty ? 'dirty' : 'clean'}`} title={document.isDirty ? 'Unsaved changes' : 'No unsaved changes'}><span className="sr-only">{document.isDirty ? 'Unsaved changes' : 'No unsaved changes'}</span></span>
+                      <span className={`status-dot ${dirty ? 'dirty' : 'clean'}`} title={dirty ? 'Unsaved changes' : 'No unsaved changes'}><span className="sr-only">{dirty ? 'Unsaved changes' : 'No unsaved changes'}</span></span>
                     </button>
                     <button className="file-remove" type="button" onClick={() => removeDocument(document)} aria-label={`Close ${document.filename}, document ${index + 1}`}><X size={14} aria-hidden="true" /></button>
                   </div>
@@ -279,7 +285,7 @@ export default function App() {
             </div>
           </div>
 
-          {activeDocument.isDirty && <div className="unsaved-banner"><span /> Unsaved changes in {activeDocument.filename}</div>}
+          {(activeDocument.isDirty || hasPendingEdit) && <div className="unsaved-banner"><span /> Unsaved changes in {activeDocument.filename}</div>}
 
           <div className={`workspace-grid ${showPreview ? 'with-preview' : ''}`}>
             <div className="tree-panel">
@@ -295,6 +301,7 @@ export default function App() {
                 onAddObject={addObjectValue}
                 onAddArray={addArrayValue}
                 onMove={moveArrayValue}
+                onPendingChange={handlePendingEdit}
               />
             </div>
             {showPreview && (
@@ -308,7 +315,7 @@ export default function App() {
                       <button type="button" onClick={() => setPreviewFontSize((size) => Math.min(MAX_PREVIEW_FONT_SIZE, size + 1))} disabled={previewFontSize === MAX_PREVIEW_FONT_SIZE} aria-label="Increase preview font size"><Plus size={14} aria-hidden="true" /></button>
                     </div>
                   </div>
-                  <span className="preview-status">{activeDocument.isDirty ? 'Unsaved' : activeDocument.savedJson ? 'Saved' : 'Original'}</span>
+                  <span className="preview-status">{activeDocument.isDirty || hasPendingEdit ? 'Unsaved' : activeDocument.savedJson ? 'Saved' : 'Original'}</span>
                 </div>
                 <pre style={{ fontSize: previewFontSize }}><code>{preview}</code></pre>
               </aside>

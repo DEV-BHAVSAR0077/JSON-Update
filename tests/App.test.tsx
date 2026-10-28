@@ -197,15 +197,31 @@ describe('application workflow', () => {
     await upload('{"name":"Dev"}')
     await waitFor(() => expect(storage.save).toHaveBeenCalled())
     storage.save.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /show json preview/i }))
+    const preview = document.querySelector('.preview-panel pre')!
     vi.useFakeTimers()
 
     const input = screen.getByLabelText('name value')
     fireEvent.change(input, { target: { value: 'D' } })
     fireEvent.change(input, { target: { value: 'De' } })
     fireEvent.change(input, { target: { value: 'Developer' } })
-    act(() => vi.advanceTimersByTime(299))
+    expect(input).toHaveValue('Developer')
+    expect(preview).toHaveTextContent('"name": "Dev"')
+    expect(screen.getByText(/unsaved changes in/i)).toBeInTheDocument()
+    const beforeUnload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(beforeUnload)
+    expect(beforeUnload.defaultPrevented).toBe(true)
+    act(() => vi.advanceTimersByTime(249))
     expect(storage.save).not.toHaveBeenCalled()
 
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(preview).toHaveTextContent('"name": "Developer"')
+    act(() => vi.advanceTimersByTime(299))
+    expect(storage.save).not.toHaveBeenCalled()
     await act(async () => {
       vi.advanceTimersByTime(1)
       await Promise.resolve()
@@ -240,7 +256,7 @@ describe('application workflow', () => {
     const search = screen.getByLabelText('Search active JSON')
     await user.type(search, 'alpha')
     expect(screen.getByLabelText('alpha value')).toBeInTheDocument()
-    expect(screen.queryByLabelText('shared value')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByLabelText('shared value')).not.toBeInTheDocument())
 
     await addFile(view.container, '{"beta":"two","shared":"second"}', 'second.json')
     expect(screen.getByLabelText('Search active JSON')).toHaveValue('')

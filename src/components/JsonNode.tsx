@@ -1,4 +1,4 @@
-import { memo, startTransition, useEffect, useState } from 'react'
+import { memo, startTransition, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 import type { JsonObject, JsonPath, JsonType, JsonValue } from '../types'
 import { defaultForType, isNonEmptyContainer, matchesSearch, typeOfJson } from '../lib/json'
@@ -17,6 +17,7 @@ interface JsonNodeProps {
   onAddObject: (path: JsonPath, key: string, value: JsonValue) => void
   onAddArray: (path: JsonPath, value: JsonValue) => void
   onMove: (path: JsonPath, from: number, to: number) => void
+  onPendingChange: (pending: boolean) => void
 }
 
 interface AddValueProps {
@@ -68,9 +69,21 @@ function AddValue({ objectMode, existingKeys = [], onAdd }: AddValueProps) {
   )
 }
 
-function NumberInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+function NumberInput({ label, value, onChange, onPendingChange }: { label: string; value: number; onChange: (value: number) => void; onPendingChange: (pending: boolean) => void }) {
   const [text, setText] = useState(String(value))
-  useEffect(() => setText(String(value)), [value])
+  const pending = useRef(false)
+  const timeout = useRef<number | null>(null)
+  useEffect(() => { if (!pending.current) setText(String(value)) }, [value])
+  useEffect(() => () => {
+    if (timeout.current !== null) window.clearTimeout(timeout.current)
+  }, [])
+
+  const clearPendingTimeout = () => {
+    if (timeout.current === null) return
+    window.clearTimeout(timeout.current)
+    timeout.current = null
+  }
+
   return (
     <input
       aria-label={`${label} value`}
@@ -80,12 +93,25 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
       onChange={(event) => {
         setText(event.target.value)
         const next = Number(event.target.value)
-        if (event.target.value !== '' && Number.isFinite(next)) startTransition(() => onChange(next))
+        pending.current = true
+        onPendingChange(true)
+        clearPendingTimeout()
+        if (event.target.value !== '' && Number.isFinite(next)) {
+          timeout.current = window.setTimeout(() => {
+            timeout.current = null
+            pending.current = false
+            startTransition(() => onChange(next))
+            onPendingChange(false)
+          }, 250)
+        }
       }}
       onBlur={() => {
         const next = Number(text)
+        clearPendingTimeout()
+        pending.current = false
         if (text === '' || !Number.isFinite(next)) setText(String(value))
         else if (next !== value) onChange(next)
+        onPendingChange(false)
       }}
     />
   )
@@ -106,10 +132,11 @@ function sameProps(left: JsonNodeProps, right: JsonNodeProps): boolean {
     && left.onAddObject === right.onAddObject
     && left.onAddArray === right.onAddArray
     && left.onMove === right.onMove
+    && left.onPendingChange === right.onPendingChange
 }
 
 function JsonNodeComponent(props: JsonNodeProps) {
-  const { label, value, path, query, root = false, onChange, onRemove, onAddObject, onAddArray, onMove } = props
+  const { label, value, path, query, root = false, onChange, onRemove, onAddObject, onAddArray, onMove, onPendingChange } = props
   const type = typeOfJson(value)
   const [expanded, setExpanded] = useState(true)
   const structured = type === 'object' || type === 'array'
@@ -173,8 +200,8 @@ function JsonNodeComponent(props: JsonNodeProps) {
         <span className={`type-pill type-${type}`}>{type}</span>
       </div>
       <div className="primitive-control">
-        {type === 'string' && <DraftTextInput aria-label={`${label} value`} value={value as string} onValueChange={(next) => onChange(path, next)} />}
-        {type === 'number' && <NumberInput label={label} value={value as number} onChange={(next) => onChange(path, next)} />}
+        {type === 'string' && <DraftTextInput aria-label={`${label} value`} value={value as string} onValueChange={(next) => onChange(path, next)} onPendingChange={onPendingChange} />}
+        {type === 'number' && <NumberInput label={label} value={value as number} onChange={(next) => onChange(path, next)} onPendingChange={onPendingChange} />}
         {type === 'boolean' && (
           <label className="switch">
             <input aria-label={`${label} value`} type="checkbox" checked={value as boolean} onChange={(event) => onChange(path, event.target.checked)} />
