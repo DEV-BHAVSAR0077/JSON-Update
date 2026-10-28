@@ -81,6 +81,12 @@ export default function App() {
   }, [persistenceDisabled, restoring, workspace])
 
   useEffect(() => {
+    if (!message) return
+    const timeout = window.setTimeout(() => setMessage(null), 10_000)
+    return () => window.clearTimeout(timeout)
+  }, [message])
+
+  useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (!hasAnyUnsavedChanges) return
       event.preventDefault()
@@ -162,9 +168,9 @@ export default function App() {
       validateJsonTree(activeDocument.working)
       const savedJson = JSON.stringify(activeDocument.working, null, 2)
       updateDocument(activeDocument.id, (document) => ({ ...document, savedJson, isDirty: false, updatedAt: Date.now() }))
-      setMessage({ kind: 'success', text: `${activeDocument.filename} saved. The updated JSON is ready to download.` })
-    } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'The JSON could not be saved.' })
+      setMessage({ kind: 'success', text: 'Saved !' })
+    } catch {
+      setMessage({ kind: 'error', text: 'Failed' })
     }
   }
 
@@ -219,22 +225,6 @@ export default function App() {
 
       <main className="editor-layout">
         <aside className="editor-sidebar">
-          <div className="file-list-heading"><div><h2>Files</h2><span>{workspace.documents.length}</span></div><JsonUploader compact onFile={loadFile} busy={busy} /></div>
-          <div className="document-list" role="list" aria-label="Open JSON files">
-            {workspace.documents.map((document, index) => {
-              const active = document.id === activeDocument.id
-              return (
-                <div className={`file-card ${active ? 'active' : ''}`} role="listitem" key={document.id}>
-                  <button className="file-select" type="button" onClick={() => selectDocument(document.id)} aria-current={active ? 'page' : undefined} aria-label={`Open ${document.filename}, document ${index + 1}`}>
-                    <span className="file-icon"><FileJson size={20} aria-hidden="true" /></span>
-                    <span className="file-details"><strong title={document.filename}>{document.filename}</strong><span>{formatBytes(document.size)} · Document {index + 1}</span></span>
-                    <span className={`status-dot ${document.isDirty ? 'dirty' : 'clean'}`} title={document.isDirty ? 'Unsaved changes' : 'No unsaved changes'}><span className="sr-only">{document.isDirty ? 'Unsaved changes' : 'No unsaved changes'}</span></span>
-                  </button>
-                  <button className="file-remove" type="button" onClick={() => removeDocument(document)} aria-label={`Close ${document.filename}, document ${index + 1}`}><X size={14} aria-hidden="true" /></button>
-                </div>
-              )
-            })}
-          </div>
           <label className="search-box"><Search size={16} aria-hidden="true" /><span className="sr-only">Search active JSON</span><input value={activeDocument.searchQuery} onChange={(event) => updateSearch(event.target.value)} placeholder="Search keys or values…" /></label>
           <section className="stats-card" aria-label="JSON statistics">
             <h2>Document overview</h2>
@@ -245,16 +235,36 @@ export default function App() {
               <div><dt>Max depth</dt><dd>{stats?.depth}</dd></div>
             </dl>
           </section>
-          <div className={`local-note ${persistenceStatus === 'error' ? 'storage-error' : ''}`}><ShieldCheck size={17} aria-hidden="true" /><p><strong>{persistenceStatus === 'error' ? 'Session only' : persistenceStatus === 'saving' ? 'Saving workspace…' : 'Stored locally'}</strong><span>{persistenceStatus === 'error' ? 'Browser storage is unavailable.' : 'Data stays on this device and may be cleared by your browser.'}</span></p></div>
+          <section className="files-section" aria-labelledby="files-heading">
+            <div className="file-list-heading"><div><h2 id="files-heading">Files</h2><span>{workspace.documents.length}</span></div><JsonUploader compact onFile={loadFile} busy={busy} /></div>
+            <div className="document-list" role="list" aria-label="Open JSON files">
+              {workspace.documents.map((document, index) => {
+                const active = document.id === activeDocument.id
+                return (
+                  <div className={`file-card ${active ? 'active' : ''}`} role="listitem" key={document.id}>
+                    <button className="file-select" type="button" onClick={() => selectDocument(document.id)} aria-current={active ? 'page' : undefined} aria-label={`Open ${document.filename}, document ${index + 1}`}>
+                      <span className="file-icon"><FileJson size={20} aria-hidden="true" /></span>
+                      <span className="file-details"><strong title={document.filename}>{document.filename}</strong><span>{formatBytes(document.size)} · Document {index + 1}</span></span>
+                      <span className={`status-dot ${document.isDirty ? 'dirty' : 'clean'}`} title={document.isDirty ? 'Unsaved changes' : 'No unsaved changes'}><span className="sr-only">{document.isDirty ? 'Unsaved changes' : 'No unsaved changes'}</span></span>
+                    </button>
+                    <button className="file-remove" type="button" onClick={() => removeDocument(document)} aria-label={`Close ${document.filename}, document ${index + 1}`}><X size={14} aria-hidden="true" /></button>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+          {/* <div className={`local-note ${persistenceStatus === 'error' ? 'storage-error' : ''}`}><ShieldCheck size={17} aria-hidden="true" /><p><strong>{persistenceStatus === 'error' ? 'Session only' : persistenceStatus === 'saving' ? 'Saving workspace…' : 'Stored locally'}</strong><span>{persistenceStatus === 'error' ? 'Browser storage is unavailable.' : 'Data stays on this device and may be cleared by your browser.'}</span></p></div> */}
         </aside>
 
         <section className="editor-workspace" aria-labelledby="editor-title">
           <div className="workspace-heading">
             <div><span className="eyebrow">{activeDocument.filename}</span><h1 id="editor-title">Edit JSON</h1><p>Change values, types, and structure. Save when you’re ready.</p></div>
-            <button className="button button-secondary" type="button" onClick={() => setShowPreview((current) => !current)}>{showPreview ? 'Hide' : 'Show'} JSON preview</button>
+            <div className="workspace-actions">
+              {message && <div className={`inline-message ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.kind === 'success' && <Check size={17} aria-hidden="true" />}{message.text}{message.kind === 'error' && <X size={17} aria-hidden="true" />}</div>}
+              <button className="button button-secondary" type="button" onClick={() => setShowPreview((current) => !current)}>{showPreview ? 'Hide' : 'Show'} JSON preview</button>
+            </div>
           </div>
 
-          {message && <div className={`inline-message ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.kind === 'success' && <Check size={17} aria-hidden="true" />}{message.text}</div>}
           {activeDocument.isDirty && <div className="unsaved-banner"><span /> Unsaved changes in {activeDocument.filename}</div>}
 
           <div className={`workspace-grid ${showPreview ? 'with-preview' : ''}`}>

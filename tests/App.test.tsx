@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceState } from '../src/types'
@@ -35,6 +35,7 @@ async function addFile(container: HTMLElement, content: string, name: string) {
 
 describe('application workflow', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     persisted = { version: 1, documents: [], activeDocumentId: null }
     storage.load.mockReset().mockImplementation(async () => ({ workspace: structuredClone(persisted), warning: null }))
@@ -61,6 +62,13 @@ describe('application workflow', () => {
     expect(screen.getByLabelText('nested object')).toBeInTheDocument()
     expect(screen.getByLabelText('tags array')).toBeInTheDocument()
     expect(screen.getByLabelText('Change empty type')).toHaveValue('null')
+  })
+
+  it('keeps search and document overview above the file list', async () => {
+    await upload('{"name":"Dev"}')
+    const files = screen.getByRole('heading', { name: 'Files' })
+    expect(screen.getByLabelText('Search active JSON').compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Document overview' }).compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('rejects invalid JSON while keeping the upload screen usable', async () => {
@@ -109,13 +117,46 @@ describe('application workflow', () => {
     await user.clear(screen.getByLabelText('name value'))
     await user.type(screen.getByLabelText('name value'), 'Avery')
     await user.click(screen.getByRole('button', { name: /save changes/i }))
-    expect(await screen.findByText(/ready to download/i)).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved !')
     expect(download).toBeEnabled()
     await user.click(download)
     expect(createUrl).toHaveBeenCalledOnce()
     expect(revokeUrl).toHaveBeenCalledWith('blob:test')
     await user.type(screen.getByLabelText('name value'), '!')
     expect(download).toBeDisabled()
+  })
+
+  it('shows the save notification above preview for ten seconds', async () => {
+    await upload('{"name":"Dev"}')
+    fireEvent.change(screen.getByLabelText('name value'), { target: { value: 'Avery' } })
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+    const notification = screen.getByRole('status')
+    const preview = screen.getByRole('button', { name: /show json preview/i })
+    expect(notification).toHaveTextContent('Saved !')
+    expect(notification.parentElement).toHaveClass('workspace-actions')
+    expect(notification.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    act(() => vi.advanceTimersByTime(9_999))
+    expect(notification).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(1))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows a red Failed notification with a trailing cross when save fails', async () => {
+    persisted = {
+      version: 1,
+      activeDocumentId: 'invalid',
+      documents: [{ id: 'invalid', filename: 'invalid.json', size: 1, original: 1, working: Infinity, savedJson: null, isDirty: true, searchQuery: '', updatedAt: 1 }],
+    }
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /save changes/i }))
+
+    const notification = screen.getByRole('alert')
+    expect(notification).toHaveClass('error')
+    expect(notification).toHaveTextContent(/^Failed$/)
+    expect(notification.lastElementChild?.tagName).toBe('svg')
   })
 
   it('restores uploaded files, the active file, and unsaved edits after remount', async () => {
